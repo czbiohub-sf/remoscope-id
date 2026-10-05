@@ -1,0 +1,5 @@
+# Distributed with the data release (pseudonymous experiment/patient IDs), never in the repo
+cohort.csv
+# Controlled-access clinical data release (one row per experiment), never in the repo
+clinical.csv
+__pycache__/
