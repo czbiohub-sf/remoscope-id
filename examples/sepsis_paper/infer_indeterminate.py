@@ -9,9 +9,8 @@ across folds -- the "on average" LOO ensemble prediction.
 Mirrors ``remo_id.workflows.loo_predict.predict_epoch`` but with a fixed external
 predict set instead of each fold's held-out validation set.
 
-Indeterminate set: by default derived from the clinical input table
-(``--clinical_table``, written by build_cohort_table.py) as the experiments of
-``--study_id`` whose label column is empty *and* which carry a free-text clinical
+Indeterminate set: by default derived from the manifest (``--manifest``) as the
+experiments whose ``label`` is empty *and* which carry a free-text clinical
 diagnosis (``patient_notes``). Patients enrolled but not yet adjudicated have
 neither a label nor notes and are therefore excluded.
 
@@ -29,20 +28,18 @@ that ``n_bags=N`` would have drawn as its ``r``-th bag. The reported probability
 therefore the mean of per-bag softmax outputs (``n_bags=N`` instead averages bag
 logits before the softmax -- a marginally different estimator).
 
-The images are loaded through remo_id's database-backed datamodule (study path),
-so this step needs the internal Remoscope database. Output feeds suptable3 /
-suptable3b of make_paper_results.py.
+The images are loaded from the manifest's paths (no database). Output feeds the
+indeterminate_patients / indeterminate_experiments tables of make_paper_results.py.
 
 Usage:
     # one fold (SLURM array element) -> writes a shard
     python examples/sepsis_paper/infer_indeterminate.py \
-        --cv_dir <cv_dir> --class_config <cfg.yaml> --epoch 50 \
-        --clinical_table clinical.csv --bag_size 500 --repeats 5 \
-        --fold_index $SLURM_ARRAY_TASK_ID
+        --cv_dir <cv_dir> --manifest manifest.csv --epoch 50 \
+        --bag_size 500 --repeats 5 --fold_index $SLURM_ARRAY_TASK_ID
 
     # merge all shards -> {cv_dir}/analysis/indeterminate/ensemble_probs_epoch50.npz
     python examples/sepsis_paper/infer_indeterminate.py \
-        --cv_dir <cv_dir> --class_config <cfg.yaml> --epoch 50 \
+        --cv_dir <cv_dir> --manifest manifest.csv --epoch 50 \
         --bag_size 500 --repeats 5 --aggregate
 """
 
@@ -54,7 +51,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from remo_id.inference.context import load_class_config
+from remo_id.data.class_config import class_config_from_dict
+from remo_id.data.manifest import manifest_class_config
 from remo_id.inference.core import (
     extract_checkpoint_metadata,
     load_checkpoint,
@@ -64,6 +62,8 @@ from remo_id.inference.mil import _predict_experiments
 from remo_id.data import RemoIDDataModule
 from remo_id.models import get_augmentation_backbone
 from remo_id.workflows.loo_report import _find_epoch_checkpoint
+
+from common import Manifest, resolve_classes
 
 # _predict_experiments derives its per-bag seed as
 #   bag_seed = seed + 1009 * experiment_index + 7919 * bag_index
@@ -82,84 +82,61 @@ def fold_dirs_for(cv_dir):
     return dirs
 
 
-def resolve_indeterminate_ids(clinical_table, study_id, label_column, explicit=None):
+def resolve_indeterminate_ids(manifest, explicit=None):
     """Experiments with an empty label but a recorded clinical diagnosis."""
     if explicit:
         return [str(e) for e in explicit]
-    if not clinical_table:
-        raise SystemExit("pass --clinical_table (or --experiment_ids)")
-
-    from common import Clinical
-
-    study = Clinical(clinical_table).study(study_id)
-    null_label = study[study[label_column].isna()].copy()
-    notes = null_label.get("patient_notes")
-    if notes is None:
-        raise RuntimeError(
-            f"Study '{study_id}' has no patient_notes column; pass --experiment_ids."
-        )
-    has_dx = notes.fillna("").astype(str).str.strip().ne("")
+    t = manifest.table
+    null_label = t[t["label"].isna()]
+    if "patient_notes" not in t.columns or t["patient_notes"].isna().all():
+        raise SystemExit("the manifest has no patient_notes; pass --experiment_ids")
+    has_dx = null_label["patient_notes"].notna()
     keep = null_label[has_dx]
 
     dropped = null_label[~has_dx]
     if len(dropped):
-        print(
-            f"Excluding {len(dropped)} null-label experiment(s) with no clinical "
-            f"diagnosis (unadjudicated): "
-            f"{sorted(set(str(s) for s in dropped['sample_id']))}"
-        )
+        print(f"Excluding {len(dropped)} null-label experiment(s) with no clinical "
+              f"diagnosis (unadjudicated or outside the classes)")
     ids = sorted(str(e) for e in keep["experiment_id"])
-    print(
-        f"Indeterminate set from the clinical table: {len(ids)} experiments / "
-        f"{keep['sample_id'].nunique()} patients"
-    )
+    print(f"Indeterminate set from the manifest: {len(ids)} experiments / "
+          f"{keep['sample_id'].nunique()} patients")
     return ids
 
 
-def build_predict_datamodule(args, req_ids, backbone_name):
+def build_predict_datamodule(manifest, req_ids, class_names, output_dir, backbone_name):
     """Loader for the explicit indeterminate IDs.
 
-    The class-config datamodule path DROPS null-label experiments and ignores
-    include_experiment_ids, so build via the STUDY path in BINARY mode -- whose
-    binary branch keeps nulls (None -> label 0, flagged in null_label_paths).
-    The label is meaningless here; the 3-class output is interpreted correctly by
-    passing the model's multiclass task_type to _predict_experiments.
+    Their manifest rows have no label, so a manifest datamodule would skip them:
+    write them to ``{output_dir}/indeterminate_manifest.csv`` labelled with the
+    first class (the label is meaningless here; the outputs are the 3-class softmax).
     """
+    t = manifest.table
+    rows = t[t["experiment_id"].isin(req_ids)].copy()
+    if rows.empty:
+        raise RuntimeError(f"None of {req_ids} are in the manifest.")
+    missing = sorted(set(req_ids) - set(rows["experiment_id"]))
+    if missing:
+        print(f"WARNING: requested IDs not in the manifest: {missing}")
+    rows["label"] = class_names[0]
+    path = os.path.join(output_dir, "indeterminate_manifest.csv")
+    rows[["experiment_id", "sample_id", "study_id", "path", "num_images", "label"]].to_csv(
+        path, index=False)
+    cfg = class_config_from_dict(manifest_class_config(path, classes=class_names,
+                                                       require_present=False))
     ds = RemoIDDataModule(
-        database_column=args.database_column,
-        database_label=True,
-        study_id=args.study_id,
-        threshold=None,
-        threshold_mode="==",
-        negative_study_ids=[],
-        negative_experiment_ids=[],
-        include_experiment_ids=req_ids,
+        class_definitions=cfg.class_definitions,
         batch_size=1,
         backbone_name=backbone_name,
         train=False,
-        task_type="binary",
-        num_classes=2,
-        class_definitions=None,
-        skip_null_labels=False,
+        task_type=cfg.task_type,
+        num_classes=cfg.num_classes,
         background_correction="none",
     )
-
     df = ds.data.copy()
     df["experiment_id"] = df["experiment_id"].astype(str)
-    df = df[df["experiment_id"].isin(req_ids)].copy()
     # Sorted so every shard shares one experiment ordering.
     df = df.sort_values("experiment_id").reset_index(drop=True)
-    if len(df) == 0:
-        raise RuntimeError(f"None of {req_ids} resolved to experiments in the database.")
-    df["_has_null_label"] = df["path"].isin(ds.null_label_paths)
-
-    missing = [e for e in req_ids if e not in list(df["experiment_id"])]
-    if missing:
-        print(f"WARNING: requested IDs not found: {missing}")
-    print(
-        f"Resolved {len(df)} experiments "
-        f"(null-label: {int(df['_has_null_label'].sum())})"
-    )
+    print(f"Resolved {len(df)} experiments")
     return ds, df
 
 
@@ -345,18 +322,16 @@ def aggregate(args, output_dir, class_names, num_classes):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cv_dir", required=True)
-    ap.add_argument("--class_config", required=True,
-                    help="Class config of the trained model (for class names / num_classes)")
+    ap.add_argument("--manifest", required=True,
+                    help="manifest CSV (indeterminate set and image paths)")
+    ap.add_argument("--classes", default=None,
+                    help="Comma-separated class names in index order (default: the "
+                         "model's, from the fold classes.yaml; must match it)")
     ap.add_argument("--epoch", type=int, default=50,
                     help="Fixed epoch checkpoint used across all folds")
-    ap.add_argument("--clinical_table", default=None,
-                    help="clinical input table CSV (build_cohort_table.py --clinical_output)")
     ap.add_argument("--experiment_ids", nargs="+", default=None,
-                    help="Explicit indeterminate experiment IDs (instead of --clinical_table)")
-    ap.add_argument("--study_id", default="sepsis",
-                    help="Study the indeterminate experiments belong to (for image loading)")
-    ap.add_argument("--database_column", default="sepsis_positive",
-                    help="Label column that is NULL for the indeterminate experiments")
+                    help="Explicit indeterminate experiment IDs (default: empty label "
+                         "and a recorded diagnosis in the manifest)")
     ap.add_argument("--bag_size", type=int, default=500)
     ap.add_argument("--repeats", type=int, default=5,
                     help="Independent bags per experiment per fold")
@@ -372,18 +347,16 @@ def main():
     output_dir = args.output_dir or os.path.join(args.cv_dir, "analysis", "indeterminate")
     os.makedirs(output_dir, exist_ok=True)
 
-    (_class_definitions, class_names, num_classes, task_type,
-     _exclude, _include, _default_idx) = load_class_config(args.class_config)
-    if task_type != "multiclass":
-        print(f"WARNING: task_type={task_type} (expected multiclass)")
+    class_names = resolve_classes(args.cv_dir, args.classes)
+    num_classes = len(class_names)
+    task_type = "multiclass" if num_classes > 2 else "binary"
 
     if args.aggregate:
         aggregate(args, output_dir, class_names, num_classes)
         return
 
-    req_ids = resolve_indeterminate_ids(
-        args.clinical_table, args.study_id, args.database_column, args.experiment_ids
-    )
+    manifest = Manifest(args.manifest)
+    req_ids = resolve_indeterminate_ids(manifest, args.experiment_ids)
 
     fold_dirs = fold_dirs_for(args.cv_dir)
     if args.fold_index is not None:
@@ -407,7 +380,8 @@ def main():
     print(f"epoch={args.epoch} bag_size={args.bag_size} repeats={args.repeats} | "
           f"{len(fold_dirs)} fold(s)")
 
-    ds, df = build_predict_datamodule(args, req_ids, backbone_name)
+    ds, df = build_predict_datamodule(manifest, req_ids, class_names, output_dir,
+                                      backbone_name)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     shard_dir = os.path.join(output_dir, "shards")

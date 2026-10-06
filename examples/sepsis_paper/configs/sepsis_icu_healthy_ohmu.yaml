@@ -15,9 +15,9 @@ classes:
     column: sepsis_positive
     value: "true"
 
-# lfm-ohmu only: drop the other scopes (all healthy) so the Fig 1 per-image UMAP
-# covers lfm-ohmu only (the only scope with all three classes). Training and every
-# other analysis use the full cohort (sepsis_icu_healthy.yaml).
+# lfm-ohmu only: drop the other scopes (all healthy) so the per-image UMAP of
+# roc_confusion_umap covers lfm-ohmu only (the only scope with all three classes).
+# Training and every other analysis use every scope (sepsis_icu_healthy.yaml).
 exclude:
   - column: scope
     value: "lfm-insight"

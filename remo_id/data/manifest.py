@@ -16,7 +16,10 @@ sample_id       no        experiments sharing a sample_id (e.g. technical
                           replicates of one blood sample) always stay in the same
                           train/val split; empty = independent sample
 study_id, site  no        free-text metadata carried into predictions
+(any other)     no        kept as read, e.g. ``scope`` or clinical variables
 ==============  ========  =====================================================
+
+Only empty fields are missing values (text such as ``None`` stays text).
 
 A manifest is turned into an ordinary class config whose entries reference
 the manifest instead of a database study::
@@ -45,12 +48,13 @@ def load_manifest(path: str, label_column: str = "label") -> pd.DataFrame:
     """Read and validate a manifest CSV.
 
     Returns a DataFrame with ``experiment_id`` (str of an int), absolute
-    ``path``, int ``num_images``, the label column (str, NaN when empty) and the
+    ``path``, int ``num_images``, the label column (str, NaN when empty), the
     optional ``sample_id``/``study_id``/``site`` columns (``None`` when absent or
-    empty).
+    empty) and then every other column as read. Only empty fields are missing.
     """
     text_cols = {c: "string" for c in (label_column, *OPTIONAL_COLUMNS)}
-    df = pd.read_csv(path, dtype={"path": "string", **text_cols})
+    df = pd.read_csv(path, dtype={"path": "string", **text_cols},
+                     keep_default_na=False, na_values=[""])
     missing = [c for c in (*REQUIRED_COLUMNS, label_column) if c not in df.columns]
     if missing:
         raise ValueError(f"Manifest {path} is missing required column(s): {missing}")
@@ -85,7 +89,8 @@ def load_manifest(path: str, label_column: str = "label") -> pd.DataFrame:
             df[col] = df[col].astype(object).where(df[col].notna(), None)
         else:
             df[col] = None
-    return df[[*REQUIRED_COLUMNS, label_column, *OPTIONAL_COLUMNS]].reset_index(drop=True)
+    columns = [*REQUIRED_COLUMNS, label_column, *OPTIONAL_COLUMNS]
+    return df[columns + [c for c in df.columns if c not in columns]].reset_index(drop=True)
 
 
 def manifest_classes(df: pd.DataFrame, label_column: str = "label", classes=None,

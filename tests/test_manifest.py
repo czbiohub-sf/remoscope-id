@@ -66,6 +66,16 @@ def test_empty_labels_are_nan(tmp_path):
     assert df.loc[0, "label"] == "a" and pd.isna(df.loc[1, "label"])
 
 
+def test_extra_columns_kept_and_only_empty_is_missing(tmp_path):
+    rows = [_row(1, "a", scope="s1", note="None", lab=1.5),
+            _row(2, "b", scope="s2", note=None, lab=None)]
+    df = load_manifest(_write_csv(tmp_path, rows))
+    assert list(df.columns[-3:]) == ["scope", "note", "lab"]
+    assert df["scope"].tolist() == ["s1", "s2"]
+    assert df.loc[0, "note"] == "None" and pd.isna(df.loc[1, "note"])
+    assert df.loc[0, "lab"] == 1.5 and pd.isna(df.loc[1, "lab"])
+
+
 # --- classes ---------------------------------------------------------------
 def test_manifest_classes_order(tmp_path):
     df = load_manifest(_write_csv(tmp_path, [_row(i, lab) for i, lab in

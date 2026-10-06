@@ -52,9 +52,9 @@ def _title_case_class(name):
 
 
 # ===========================================================================
-# Fig 1: confusion matrix + ROC (Youden-J), 2-panel
+# ROC + confusion matrix figures
 # ===========================================================================
-# All fig1-family panels are sized to Nature column widths (style.SINGLE /
+# All ROC / confusion-matrix panels are sized to Nature column widths (style.SINGLE /
 # style.DOUBLE) and typeset entirely by style.py's rcParams (5-7 pt), so the
 # PNGs drop into the manuscript at 100% with no rescaling and no per-figure
 # font tuning. Subpanel keys are style.PANEL_LABEL_PT bold, placed just outside
@@ -141,7 +141,7 @@ def _panel_key(ax, key, dx_pt=-13, dy_pt=4):
 def _two_panel_roc_cm(out, name, ci, y_true, roc_probs, cm, bootstrap_n,
                       roc_title, cm_title, col_names=None, cm_paren=None):
     """Shared double-column (183 mm) `a) ROC | b) confusion matrix` figure used
-    by the whole fig1 family. Sized and typeset by style.py; saved at the fixed
+    by the ROC / confusion-matrix figures. Sized and typeset by style.py; saved at the fixed
     canvas width (no bbox re-crop)."""
     names = ci.display_names
     colors = style.class_colors_muted(names)
@@ -168,7 +168,7 @@ def _derive_misclassifications(preds, ci):
     """Return the held-out misclassifications as a DataFrame (errors only).
 
     Errors come from the pooled predictions under the Youden-shifted argmax rule
-    (the fig1 / table2 rule). Columns: experiment_id, study_id, true_class,
+    (the rule of roc_confusion_umap and the performance table). Columns: experiment_id, study_id, true_class,
     predicted_class, confidence, error_type, sample_id.
     """
     y_true = preds["y_true"].astype(int)
@@ -190,14 +190,14 @@ def _derive_misclassifications(preds, ci):
     return df.reset_index(drop=True)
 
 
-def _diagnosis_maps(clin, study_id):
+def _diagnosis_maps(manifest, study_id):
     """experiment_id -> (clinical diagnosis, pathogen) from the clinical table.
 
     The notes column carries the adjudicated free-text diagnosis; the pathogen
     column just the organism (column names from the spec's `diagnosis`)."""
-    dxs = clin.spec["diagnosis"]
+    dxs = manifest.spec["diagnosis"]
     try:
-        sep = clin.study(study_id)
+        sep = manifest.study(study_id)
         cols = {c: sep[c] if c in sep.columns else pd.Series([None] * len(sep))
                 for c in (dxs["notes_column"], dxs["pathogen_column"])}
         dx_map = dict(zip(sep["experiment_id"], cols[dxs["notes_column"]]))
@@ -208,7 +208,7 @@ def _diagnosis_maps(clin, study_id):
     return dx_map, path_map
 
 
-def error_analysis_clinical(out, ci, preds, clin):
+def misclassifications(out, ci, preds, manifest):
     """Misclassifications-only error report enriched with sample_id + clinical dx.
 
     Uses the shared held-out misclassification set, then adds the clinical
@@ -216,7 +216,7 @@ def error_analysis_clinical(out, ci, preds, clin):
     """
     df = _derive_misclassifications(preds, ci)
     eids = df["experiment_id"].values
-    dx_map, path_map = _diagnosis_maps(clin, ci.sepsis_study)
+    dx_map, path_map = _diagnosis_maps(manifest, ci.sepsis_study)
     df["clinical_diagnosis"] = [dx_map.get(e, "") for e in eids]
     df["pathogen"] = [path_map.get(e, "") for e in eids]
 
@@ -224,13 +224,12 @@ def error_analysis_clinical(out, ci, preds, clin):
             "predicted_class", "confidence", "error_type",
             "clinical_diagnosis", "pathogen"]
     df = df[[c for c in cols if c in df.columns]]
-    df.to_csv(os.path.join(out, "suptable1_error_analysis.csv"), index=False)
+    df.to_csv(os.path.join(out, "misclassifications.csv"), index=False)
     disp = df.copy()
     if "confidence" in disp:
         disp["confidence"] = disp["confidence"].map(lambda v: f"{float(v):.3f}")
-    C.render_table(disp, os.path.join(out, "suptable1_error_analysis"),
-                   title="Supplementary Table 1: Misclassifications (held-out) "
-                         "with clinical diagnosis",
+    C.render_table(disp, os.path.join(out, "misclassifications"),
+                   title="Misclassifications (held-out) with clinical diagnosis",
                    fontsize=6)
 
 
@@ -275,13 +274,13 @@ def _load_allexp_shards(pred_dir, epoch):
     return df
 
 
-def suptable1b_error_analysis_all_folds(out, ci, args):
+def misclassifications_all_folds(out, ci, args):
     """Per-experiment error rate across EVERY fold, including folds that trained
     on it -- the "is this experiment wrong even when memorized?" table.
 
-    Uses PLAIN argmax, not the Youden-shifted rule of suptable1: the question is
+    Uses PLAIN argmax, not the Youden-shifted rule of the misclassifications table: the question is
     what the model actually decides, not what a tuned operating point decides, so
-    the held-out column here can disagree with suptable1 by design.
+    the held-out column here can disagree with the misclassifications table by design.
 
     Train-set rows are a memorization diagnostic and are NOT held-out
     performance -- an experiment the model gets wrong while training on it is
@@ -321,7 +320,7 @@ def suptable1b_error_analysis_all_folds(out, ci, args):
     df = pd.DataFrame(rows)
     df["sample_id"] = [args.sample_map.get(e, "") for e in df["experiment_id"]]
 
-    dx_map, path_map = _diagnosis_maps(args.clin, ci.sepsis_study)
+    dx_map, path_map = _diagnosis_maps(args.manifest, ci.sepsis_study)
     df["clinical_diagnosis"] = [dx_map.get(e, "") for e in df["experiment_id"]]
     df["pathogen"] = [path_map.get(e, "") for e in df["experiment_id"]]
 
@@ -335,7 +334,7 @@ def suptable1b_error_analysis_all_folds(out, ci, args):
     df = df[[c for c in cols if c in df.columns]]
     df = df.sort_values(["train_error_pct", "heldout_correct"],
                         ascending=[False, True]).reset_index(drop=True)
-    df.to_csv(os.path.join(out, "suptable1b_error_analysis_all_folds.csv"),
+    df.to_csv(os.path.join(out, "misclassifications_all_folds.csv"),
               index=False)
 
     ever_wrong = df[(df["n_train_wrong"] > 0) | (df["heldout_correct"] == False)]  # noqa: E712
@@ -347,8 +346,8 @@ def suptable1b_error_analysis_all_folds(out, ci, args):
                    ("train_error_pct", "{:.1f}%")):
         if c in disp:
             disp[c] = disp[c].map(lambda v, f=fmt: "" if pd.isna(v) else f.format(v))
-    C.render_table(disp, os.path.join(out, "suptable1b_error_analysis_all_folds"),
-                   title=f"Supplementary Table 1b: per-experiment errors across all "
+    C.render_table(disp, os.path.join(out, "misclassifications_all_folds"),
+                   title=f"Per-experiment errors across all "
                          f"{long['fold'].nunique()} folds at epoch {args.epoch} "
                          f"(plain argmax; train-set rows are a memorization "
                          f"diagnostic, not performance)",
@@ -449,7 +448,7 @@ def _cm_variants(ci, preds):
     ]
 
 
-def suptable2_cm_variants(out, ci, preds, args):
+def confusion_matrix_variants(out, ci, preds, args):
     """Every aggregation x decision-rule confusion matrix as one table.
 
     Six 3x3 matrices are mostly empty -- Healthy barely confuses with anything,
@@ -470,7 +469,7 @@ def suptable2_cm_variants(out, ci, preds, args):
         mf1 = f"{f1_score(yt, y_pred, average='macro'):.3f}"
         # One row per class: one-vs-rest sens/spec/PPV/NPV off the matrix.
         # Point estimates only -- with 6 variants x 3 classes the bootstrap CIs
-        # of table2 would overlap almost completely and swamp the comparison.
+        # of the performance table would overlap almost completely and swamp the comparison.
         for r_i, cls in enumerate(ci.display_order):
             tp = int(cm[cls, cls])
             fn = int(cm[cls].sum()) - tp
@@ -495,23 +494,23 @@ def suptable2_cm_variants(out, ci, preds, args):
               f"errors={int((y_pred != yt).sum())}")
 
     df = pd.DataFrame(rows)
-    df.to_csv(os.path.join(out, "suptable2_cm_variants.csv"), index=False)
+    df.to_csv(os.path.join(out, "confusion_matrix_variants.csv"), index=False)
     # The snake_case key is a join handle for other scripts, not something to
     # print next to the readable Aggregation/Decision Rule columns.
     C.render_table(df.drop(columns=["variant_key"]),
-                   os.path.join(out, "suptable2_cm_variants"),
-                   title="Supplementary Table 2: Aggregation and Decision-Rule "
-                         "Variants (same model, same predictions)",
+                   os.path.join(out, "confusion_matrix_variants"),
+                   title="Aggregation and Decision-Rule Variants "
+                         "(same model, same predictions)",
                    fontsize=6)
 
 
-def fig1e_sepsis_vs_icu_roc(out, ci, preds, args):
+def roc_sepsis_vs_icu_control(out, ci, preds, args):
     """Sepsis-vs-ICU-control ROC (two-class renormalized P(sepsis)) for the
     sample-averaged predictions only, with a bootstrap 95% CI band."""
     from remo_id.analysis.pairwise import filter_pairwise
     style.apply()
     if ci.neg_idx is None:
-        print("  fig1e skipped: no ICU-control class")
+        print("  skipped: no ICU-control class")
         return "skip"
     sep_name = ci.class_names[ci.sepsis_idx]
     neg_name = ci.class_names[ci.neg_idx]
@@ -553,7 +552,7 @@ def fig1e_sepsis_vs_icu_roc(out, ci, preds, args):
     ax.legend(loc="lower right")
     style.range_frame(ax); style.trim_spines(ax)
     fig.tight_layout()
-    fig.savefig(os.path.join(out, "fig1e_sepsis_vs_icu_roc.png"))
+    fig.savefig(os.path.join(out, "roc_sepsis_vs_icu_control.png"))
     plt.close(fig)
 
 
@@ -561,8 +560,8 @@ def fig1e_sepsis_vs_icu_roc(out, ci, preds, args):
 # Patient-level (sample_id) plain-argmax rules.
 #
 # Three ways to turn a patient's technical replicates into one call, all using
-# plain argmax (no Youden shift): fig1_cm_roc_argmax_patient_mean draws the
-# "mean" rule, table_patient_argmax_summary compares all three:
+# plain argmax (no Youden shift): confusion_matrix_argmax_patient draws the
+# "mean" rule, patient_argmax_summary compares all three:
 #   unanimous  every replicate's argmax must agree; any disagreement makes the
 #              patient wrong (lands in a "Discordant" column)
 #   mean       average the replicate probability vectors, then argmax
@@ -662,18 +661,18 @@ def _patient_argmax_figure(out, ci, args, name, yt, y_pred, roc_probs, n_rep,
     return acc
 
 
-def fig1_cm_roc_argmax_patient_mean(out, ci, preds, args):
+def confusion_matrix_argmax_patient(out, ci, preds, args):
     """Patient level: average the replicate probability vectors, then plain
     argmax (no Youden shift). ROC uses the same averaged probabilities."""
     yt, yp, n_rep, keys = _patient_pool(preds, "mean")
     return _patient_argmax_figure(
-        out, ci, args, "fig1_cm_roc_argmax_patient_mean", yt, yp.argmax(axis=1),
+        out, ci, args, "confusion_matrix_argmax_patient", yt, yp.argmax(axis=1),
         yp, n_rep, keys,
         cm_title=f"Confusion Matrix\n(mean of replicates, argmax)\nn={len(yt)} patients",
         roc_title="ROC Curve (mean P across replicates)")
 
 
-def table_patient_argmax_summary(out, ci, preds, args):
+def patient_argmax_summary(out, ci, preds, args):
     """One table comparing the experiment-level argmax baseline with the three
     patient-level aggregation rules: accuracy, macro F1, per-class sensitivity,
     and per-class OvR AUC."""
@@ -711,13 +710,13 @@ def table_patient_argmax_summary(out, ci, preds, args):
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    C.render_table(df, os.path.join(out, "table_patient_argmax_summary"),
+    C.render_table(df, os.path.join(out, "patient_argmax_summary"),
                    title="Experiment- vs patient-level argmax rules")
     print(df.to_string(index=False))
 
 
 # ---------------------------------------------------------------------------
-# Fig 1: patient-level ROC/CM top row + a bottom row of per-image UMAP panels
+# roc_confusion_umap: patient-level ROC/CM top row + a bottom row of per-image UMAP panels
 # (true class / model-probability blend / sample_id).
 # ---------------------------------------------------------------------------
 def _align_image_probs(probs_dir, exp, imgid):
@@ -747,15 +746,15 @@ def _align_image_probs(probs_dir, exp, imgid):
     return probs
 
 
-def fig1_cm_roc_umap_sample_average(out, ci, preds, args):
-    """Fig 1: top row = a) ROC, b) confusion matrix (Youden-shifted argmax) from
+def roc_confusion_umap(out, ci, preds, args):
+    """Top row = a) ROC, b) confusion matrix (Youden-shifted argmax) from
     patient-level probability-averaged predictions; bottom row = three per-image
     UMAP panels coloured by c) true class, d) model probability (blend of the
     class colours), e) sample_id."""
     import matplotlib.colors as mcolors
 
     if not os.path.exists(args.umap_npz):
-        print(f"  fig1 skipped: {args.umap_npz} missing (run umap_images.py)")
+        print(f"  skipped: {args.umap_npz} missing (run umap_images.py)")
         return "skip"
 
     style.apply()
@@ -886,7 +885,7 @@ def fig1_cm_roc_umap_sample_average(out, ci, preds, args):
     for ax, lab in zip(fig.axes[2:5], ["c", "d", "e"]):
         _panel_key(ax, lab, dx_pt=-4)
 
-    fname = "fig1_cm_roc_umap_sample_average.png"
+    fname = "roc_confusion_umap.png"
     fig.savefig(os.path.join(out, fname))
     plt.close(fig)
     print(f"  {fname}: {len(coords)} images, {len(uniq)} samples, "
@@ -894,16 +893,16 @@ def fig1_cm_roc_umap_sample_average(out, ci, preds, args):
 
 
 # ===========================================================================
-# Table 2: per-class performance
+# Per-class performance
 # ===========================================================================
 def _clinical_perf_table(y_true, y_probs, ci, bootstrap_n=1000, seed=0):
     """Per-class clinical metrics under Youden-shifted argmax, 95% bootstrap CIs
     + Macro row.
 
     Columns: Class, Support, F1, Accuracy, Sensitivity, Specificity, PPV, NPV.
-    Predictions use the SAME rule as the fig1 confusion matrix -- subtract each
+    Predictions use the SAME rule as the roc_confusion_umap confusion matrix -- subtract each
     class's Youden-J threshold from its probability, then argmax -- so every
-    experiment gets exactly one predicted class and table2 agrees with the CM.
+    experiment gets exactly one predicted class and the table agrees with the CM.
     Thresholds are fixed on the full pooled data and held constant across bootstrap
     resamples. Rows follow display order; Macro = unweighted mean across classes.
     """
@@ -912,7 +911,7 @@ def _clinical_perf_table(y_true, y_probs, ci, bootstrap_n=1000, seed=0):
     y_true = np.asarray(y_true).astype(int)
     y_probs = np.asarray(y_probs)
 
-    # Per-class Youden-J thresholds, fixed on full data (identical to fig1 CM).
+    # Per-class Youden-J thresholds, fixed on full data (identical to the CM).
     thr = C.youden_thresholds(y_true, y_probs, ci.class_names)
 
     def _counts(yt, yp, c):
@@ -989,11 +988,11 @@ def _clinical_perf_table(y_true, y_probs, ci, bootstrap_n=1000, seed=0):
     return pd.DataFrame(rows, columns=["Class", "Support"] + metric_cols)
 
 
-def table2_performance(out, ci, preds, args):
+def performance(out, ci, preds, args):
     df = _clinical_perf_table(preds["y_true"], preds["y_probs"], ci,
                               bootstrap_n=args.bootstrap_n, seed=args.seed)
-    df.to_csv(os.path.join(out, "table2_performance.csv"), index=False)
-    C.render_table(df, os.path.join(out, "table2_performance"),
+    df.to_csv(os.path.join(out, "performance.csv"), index=False)
+    C.render_table(df, os.path.join(out, "performance"),
                    title="Performance metrics (95% bootstrap CI)")
 
 
@@ -1022,9 +1021,9 @@ def _corner_panel_labels(axes, fontsize=style.PANEL_LABEL_PT):
 
 
 # ===========================================================================
-# supFig 7: threshold sensitivity (one-vs-rest)
+# Threshold sensitivity (one-vs-rest)
 # ===========================================================================
-def supfig7_threshold_sensitivity(out, ci, preds):
+def threshold_sensitivity(out, ci, preds):
     """F1 / precision / recall vs threshold per class (OvR), display order,
     with subpanel callouts in the top-left corner of each panel."""
     style.apply()
@@ -1068,16 +1067,17 @@ def supfig7_threshold_sensitivity(out, ci, preds):
                  fontsize=style.font_pt("axes.titlesize"), fontweight="bold")
     fig.tight_layout(rect=(0.03, 0, 1, 0.975))
     _corner_panel_labels(axes_flat)
-    fig.savefig(os.path.join(out, "supfig7_threshold_sensitivity.png"))
+    fig.savefig(os.path.join(out, "threshold_sensitivity.png"))
     plt.close(fig)
 
 
 # ===========================================================================
-# Clinical metadata (sepsis study) -- shared by Fig3 / Fig4 / Tables
+# Clinical columns of the manifest -- shared by the clinical outputs
 # ===========================================================================
 # Every study-specific choice (columns, labels, vocabularies, table rows) comes
-# from the clinical-table spec (configs/clinical_tables.yaml, ``clin.spec``) and
-# every value from the clinical input table (``clin.table``); see common.Clinical.
+# from the clinical spec (configs/clinical_tables.yaml, ``manifest.spec``) and every
+# value from the manifest's clinical columns (``manifest.table``); see common.Manifest.
+# Empty fields are missing values; nothing else is.
 _TRUE_TOKENS = {"true", "1", "yes", "y", "t"}
 
 
@@ -1099,8 +1099,22 @@ def _is_female(v):
     return str(v).strip().lower().startswith("f")
 
 
+def _first_value(row, cols):
+    """First non-empty value of ``cols`` in ``row`` (None if all are empty)."""
+    for c in cols:
+        v = row.get(c)
+        if v is not None and not pd.isna(v):
+            return v
+    return None
+
+
+def _text(v):
+    """A free-text field as a stripped string ("" when empty)."""
+    return "" if v is None or pd.isna(v) else str(v).strip()
+
+
 def _warn_missing_columns(df, cols, where):
-    """Fail loudly when a source column is absent from the clinical table.
+    """Fail loudly when a source column is absent from the manifest.
 
     A missing column silently coerces to 0 for every patient (a table reporting
     Mortality 0 / Gram+ 0 for the whole cohort).
@@ -1114,29 +1128,26 @@ def _warn_missing_columns(df, cols, where):
     return missing
 
 
-def _group_col(ci):
-    """The sepsis class's label column (class config) = the cohort group column."""
-    col = ci.class_definitions[ci.sepsis_idx].get("column")
-    if not col:
-        raise ValueError("the sepsis class in the class config has no `column`")
-    return col
+def _label_rows(ci, df, idx):
+    """Rows of ``df`` whose manifest label is class ``idx``."""
+    return df[df["label"] == ci.labels[idx]]
 
 
 def _var_groups(spec):
-    """Fig 3 row groups from the spec; [min, max] pairs become tuples."""
+    """clinical_correlations row groups from the spec; [min, max] pairs become tuples."""
     return {g: [tuple(e) if isinstance(e, list) else e for e in entries]
             for g, entries in spec["correlation_groups"].items()}
 
 
 def _clinical_vars(spec):
-    """Fig 4/4b clinical variables: {label: column}, in spec order."""
+    """Clinical variables of the sepsis vs ICU-control discrimination: {label: column}, in spec order."""
     labels = spec["variable_labels"]
     return {labels[k]: k for k in spec["discrimination"]["variables"] if k in labels}
 
 
-def table2b_ovr_auc(out, ci, preds, args):
+def one_vs_rest_auc(out, ci, preds, args):
     """One-vs-rest AUC per class with 95% bootstrap CIs (+ macro), from the pooled
-    held-out predictions. Complements table2 (which reports threshold metrics)."""
+    held-out predictions. Complements the performance table (which reports threshold metrics)."""
     style.apply()
     y_true = preds["y_true"].astype(int)
     y_probs = preds["y_probs"]
@@ -1164,46 +1175,20 @@ def table2b_ovr_auc(out, ci, preds, args):
         mlo, mhi = (np.percentile(boot, [2.5, 97.5]) if boot else (np.nan, np.nan))
         rows.append({"Class": "Macro", "Positives": "", "N": int(len(y_true)),
                      "AUC (OvR) [95% CI]": f"{_macro(y_true, y_probs):.2f} [{mlo:.2f}–{mhi:.2f}]"})
-    C.render_table(pd.DataFrame(rows), os.path.join(out, "table2b_ovr_auc"),
+    C.render_table(pd.DataFrame(rows), os.path.join(out, "one_vs_rest_auc"),
                    title="One-vs-rest AUC per class (95% bootstrap CI)")
-    print(f"  table2b OvR AUC: " + "; ".join(f"{r['Class']}={r['AUC (OvR) [95% CI]']}" for r in rows))
+    print(f"  OvR AUC: " + "; ".join(f"{r['Class']}={r['AUC (OvR) [95% CI]']}" for r in rows))
 
 
 _OPS = {">": np.greater, ">=": np.greater_equal, "<": np.less, "<=": np.less_equal}
 
 
-def load_clinical_metadata(clin, study_id):
-    """One study's rows of the clinical table, cleaned per the spec's `preprocess`
-    (missing-value codes, capped numeric age, 0/1 booleans, sparse flags, derived
-    scores)."""
-    pre = clin.spec["preprocess"]
-    df = clin.study(study_id)
-    df["experiment_id"] = df["experiment_id"].astype(str)
-    if "sample_id" in df.columns:
-        df["sample_id"] = df["sample_id"].astype(str)
-    for col, codes in pre.get("missing_codes", {}).items():
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            df.loc[df[col].isin(codes), col] = np.nan
-    # Age: HIPAA caps ages >89 (recorded as ">89"/"90+"); treat all as the cap and
-    # combine into the numeric age so it's usable in medians/ranges/tests.
-    age = pre.get("age")
-    if age and age["column"] in df.columns:
-        a = df[age["column"]].astype(str).str.extract(r"(\d+\.?\d*)")[0]
-        df[age["column"]] = pd.to_numeric(a, errors="coerce").clip(upper=age["cap"])
-    for col in pre.get("boolean_columns", []):
-        if col in df.columns:
-            df[col] = df[col].map(lambda v: float(_is_true(v)) if v is not None
-                                  and str(v).strip().lower() not in ("", "nan", "none")
-                                  else np.nan)
-    # A SPARSE flag is set only for the flagged patients, so a null means "no",
-    # not "unknown". Left as null it collapses the denominator to the flagged rows
-    # alone and prints 1 (100.0%).
-    for col in pre.get("sparse_flags", []):
-        if col in df.columns:
-            df[col] = df[col].map(lambda v: float(_is_true(v)))
+def study_rows(manifest, study_id):
+    """One study's manifest rows plus the spec's derived scores."""
+    df = manifest.study(study_id)
+    df["sample_id"] = df["sample_id"].astype(str)
     # Derived scores: sum of 0/1 terms, each true if any of its conditions holds.
-    for name, terms in pre.get("derived_scores", {}).items():
+    for name, terms in manifest.spec.get("derived_scores", {}).items():
         cols = [c for term in terms for c, _, _ in term]
         if not set(cols) <= set(df.columns):
             continue
@@ -1220,7 +1205,7 @@ def load_clinical_metadata(clin, study_id):
 
 
 def _all_vars(spec):
-    """Every clinical variable named in the Fig 3 groups, in group order (a list,
+    """Every clinical variable named in the correlation groups, in group order (a list,
     so output row order does not depend on hash randomization)."""
     out = []
     for entries in _var_groups(spec).values():
@@ -1230,13 +1215,16 @@ def _all_vars(spec):
 
 
 def build_patient_df(ci, preds, clinical, spec):
-    """Patient-level merge of model probabilities with sepsis clinical metadata."""
+    """Patient-level merge of model probabilities with the sepsis study's clinical
+    columns; ``y_sepsis`` is 1 for the sepsis class, 0 for ICU control."""
     cols = {ci.prob_col(i): preds["y_probs"][:, i] for i in range(len(ci.class_names))}
     pred_df = pd.DataFrame({"experiment_id": preds["eids"].astype(str), **cols})
     merged = pred_df.merge(clinical, on="experiment_id", how="inner", suffixes=("", "_clin"))
+    merged["y_sepsis"] = merged["label"].map({ci.labels[ci.sepsis_idx]: 1.0,
+                                              ci.labels[ci.neg_idx]: 0.0})
     prob_cols = [ci.prob_col(i) for i in range(len(ci.class_names))]
     agg = {c: "mean" for c in prob_cols}
-    for v in _all_vars(spec) + [_group_col(ci)]:
+    for v in _all_vars(spec) + ["y_sepsis"]:
         if v in merged.columns and v not in prob_cols and v not in agg:
             agg[v] = "first"
     agg = {k: v for k, v in agg.items() if k in merged.columns}
@@ -1244,7 +1232,7 @@ def build_patient_df(ci, preds, clinical, spec):
 
 
 # ===========================================================================
-# Fig 3: clinical correlations heatmap
+# Clinical correlations heatmap
 # ===========================================================================
 def _disp_prob_cols(ci):
     return [ci.prob_col(i) for i in ci.display_order]
@@ -1330,11 +1318,11 @@ def _resolve_var_order(patient, corr, spec):
     return order
 
 
-def fig3_clinical_correlations(out, ci, preds, clin):
+def clinical_correlations(out, ci, preds, manifest):
     style.apply()
-    spec = clin.spec
+    spec = manifest.spec
     labels = spec["variable_labels"]
-    clinical = load_clinical_metadata(clin, ci.sepsis_study)
+    clinical = study_rows(manifest, ci.sepsis_study)
     patient = build_patient_df(ci, preds, clinical, spec)
     disp_cols = _disp_prob_cols(ci)
     corr = _compute_correlations(patient, disp_cols, spec)
@@ -1407,15 +1395,15 @@ def fig3_clinical_correlations(out, ci, preds, clin):
 
     corr_out = corr.copy()
     corr_out["variable_label"] = corr_out["variable"].map(labels)
-    corr_out.to_csv(os.path.join(out, "fig3_clinical_correlations.csv"), index=False)
+    corr_out.to_csv(os.path.join(out, "clinical_correlations.csv"), index=False)
     for ext in ("png",):
-        fig.savefig(os.path.join(out, f"fig3_clinical_correlations.{ext}"), dpi=300,
+        fig.savefig(os.path.join(out, f"clinical_correlations.{ext}"), dpi=300,
                     facecolor="white")
     plt.close(fig)
 
 
 # ===========================================================================
-# Fig 4: sepsis+/- AUC ranking (model vs clinical variables)
+# Sepsis vs ICU-control AUC ranking (model vs clinical variables)
 # ===========================================================================
 def _auc_directional(y, x):
     auc = roc_auc_score(y, x)
@@ -1468,7 +1456,7 @@ def _bh_fdr(pvals):
     return q
 
 
-def fig4_sepsis_auc_ranking(out, ci, preds, clin, bootstrap_n=1000, seed=0,
+def sepsis_vs_icu_control_auc_ranking(out, ci, preds, manifest, bootstrap_n=1000, seed=0,
                             min_combo_n=10, suffix=""):
     """Sepsis+/- discrimination ranking.
 
@@ -1490,14 +1478,12 @@ def fig4_sepsis_auc_ranking(out, ci, preds, clin, bootstrap_n=1000, seed=0,
     from sklearn.preprocessing import StandardScaler
     from remo_id.analysis.statistical_tests import delong_test
 
-    clinical = load_clinical_metadata(clin, ci.sepsis_study)
-    patient = build_patient_df(ci, preds, clinical, clin.spec)
-    gcol = _group_col(ci)
-    if gcol not in patient.columns:
-        raise RuntimeError(f"{gcol} missing; cannot rank sepsis discrimination")
+    clinical = study_rows(manifest, ci.sepsis_study)
+    patient = build_patient_df(ci, preds, clinical, manifest.spec)
+    gcol = "y_sepsis"
     y_sep = patient[gcol].values.astype(float)
-    clinical_vars = _clinical_vars(clin.spec)
-    fusion_exclude = set(clin.spec["discrimination"]["fusion_exclude"])
+    clinical_vars = _clinical_vars(manifest.spec)
+    fusion_exclude = set(manifest.spec["discrimination"]["fusion_exclude"])
 
     sep_col = ci.prob_col(ci.sepsis_idx)
     model_cols = [(f"Remoscope P({ci.class_names[ci.sepsis_idx]})", sep_col)]
@@ -1622,7 +1608,7 @@ def fig4_sepsis_auc_ranking(out, ci, preds, clin, bootstrap_n=1000, seed=0,
               f"(LRT p={b['p_lrt']:.2f}, DeLong p={b['p_delong']:.2f})")
         print(f"  LRT significance: {n_raw} at raw p<0.05 (~{0.05*n_tests:.0f} expected by "
               f"chance across {n_tests} tests); {n_fdr} survive BH-FDR q<0.05")
-        fusion_df.to_csv(os.path.join(out, f"fig4_combo_search{suffix}.csv"), index=False)
+        fusion_df.to_csv(os.path.join(out, f"sepsis_vs_icu_control_fusion_search{suffix}.csv"), index=False)
 
     # ---- assemble ranking + plot (models + strong singles + top-N fusions) ----
     N_TOP_FUSIONS = 15
@@ -1632,7 +1618,7 @@ def fig4_sepsis_auc_ranking(out, ci, preds, clin, bootstrap_n=1000, seed=0,
                          direction="", n=len(y_sep), type="random", p_lrt=np.nan, p_delong=np.nan))
     rank = pd.DataFrame(all_rows)
     rank.sort_values("AUC", ascending=False).to_csv(
-        os.path.join(out, f"fig4_sepsis_auc_ranking{suffix}.csv"), index=False)
+        os.path.join(out, f"sepsis_vs_icu_control_auc_ranking{suffix}.csv"), index=False)
 
     df = rank[((rank["type"].isin(["model", "model+clinical"])) & (rank["AUC"] > 0.5))
               | ((rank["type"] == "clinical") & (rank["AUC"] > 0.55))
@@ -1681,12 +1667,12 @@ def fig4_sepsis_auc_ranking(out, ci, preds, clin, bootstrap_n=1000, seed=0,
                        Patch(color=style.MUTED_CLASS[0], label="P(Sepsis) + <=2 features (fusion)"),
                        Patch(color=style.FG, label="Clinical variable")],
               loc="lower right", fontsize=6, frameon=False)
-    fig.savefig(os.path.join(out, f"fig4_sepsis_auc_ranking{suffix}.png"), dpi=300,
+    fig.savefig(os.path.join(out, f"sepsis_vs_icu_control_auc_ranking{suffix}.png"), dpi=300,
                 bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
-def fig4b_two_variable_search(out, ci, preds, clin, bootstrap_n=1000, seed=0,
+def two_variable_search(out, ci, preds, manifest, bootstrap_n=1000, seed=0,
                               min_combo_n=10, n_top=25, suffix=""):
     """Exhaustive 2-variable search for sepsis+/- discrimination, allowing EVERY
     feature: the model class-probabilities P(Sepsis)/P(ICU)/P(Healthy) AND all
@@ -1699,14 +1685,12 @@ def fig4b_two_variable_search(out, ci, preds, clin, bootstrap_n=1000, seed=0,
     import itertools
     style.apply()
 
-    clinical = load_clinical_metadata(clin, ci.sepsis_study)
-    patient = build_patient_df(ci, preds, clinical, clin.spec)
-    gcol = _group_col(ci)
-    if gcol not in patient.columns:
-        raise RuntimeError(f"{gcol} missing; cannot run 2-variable search")
+    clinical = study_rows(manifest, ci.sepsis_study)
+    patient = build_patient_df(ci, preds, clinical, manifest.spec)
+    gcol = "y_sepsis"
     y_sep = patient[gcol].values.astype(float)
-    clinical_vars = _clinical_vars(clin.spec)
-    fusion_exclude = set(clin.spec["discrimination"]["fusion_exclude"])
+    clinical_vars = _clinical_vars(manifest.spec)
+    fusion_exclude = set(manifest.spec["discrimination"]["fusion_exclude"])
 
     # full feature pool: model probabilities + all clinical variables
     feats = [(f"P({ci.class_names[ci.sepsis_idx]})", ci.prob_col(ci.sepsis_idx))]
@@ -1737,7 +1721,7 @@ def fig4b_two_variable_search(out, ci, preds, clin, bootstrap_n=1000, seed=0,
         rows.append(dict(pair=f"{la} + {lb}", cols=f"{ca};{cb}", AUC=auc,
                          n=int(m.sum()), kind=kind, leak=leak))
     search = pd.DataFrame(rows).sort_values("AUC", ascending=False).reset_index(drop=True)
-    search.to_csv(os.path.join(out, f"fig4b_two_variable_search{suffix}.csv"), index=False)
+    search.to_csv(os.path.join(out, f"two_variable_search{suffix}.csv"), index=False)
     print(f"  2-variable search: {len(feats)} features -> {len(search)} pairs; "
           f"top = {search['pair'].iloc[0]} AUC={search['AUC'].iloc[0]:.2f} "
           f"(top non-leak = {search[~search['leak']]['pair'].iloc[0]} "
@@ -1771,7 +1755,7 @@ def fig4b_two_variable_search(out, ci, preds, clin, bootstrap_n=1000, seed=0,
                        Patch(color=style.MUTED_CLASS[0], label="model + clinical"),
                        Patch(color=style.FG, label="clinical + clinical")],
               loc="lower right", fontsize=6, frameon=False)
-    fig.savefig(os.path.join(out, f"fig4b_two_variable_search{suffix}.png"), dpi=300,
+    fig.savefig(os.path.join(out, f"two_variable_search{suffix}.png"), dpi=300,
                 bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
@@ -1813,32 +1797,27 @@ def _per_experiment_frame(ci, preds):
     return df
 
 
-def table1_demographics(out, ci, preds, clin):
+def demographics(out, ci, preds, manifest):
     # Demographics + SUPPORT. Per-class experiment membership = the held-out
     # prediction pool (the model's actual support -- this already respects every
     # class filter, e.g. healthy=flowcell_type==Thin, and all exclusions). The
-    # clinical table supplies the attributes (images, cells, mortality, culture
+    # manifest supplies the attributes (images, cells, mortality, culture
     # positivity, pathogen, age), joined onto those experiments. A Total row is
     # appended.
-    t1 = clin.spec["table1"]
+    t1 = manifest.spec["demographics"]
     mort, micro = t1["mortality"], t1["microbiology"]
     pcol, acol = t1["pathogen_column"], t1["age_column"]
-    sep = load_clinical_metadata(clin, ci.sepsis_study)
-    sep["experiment_id"] = sep["experiment_id"].astype(str)
-    if "sample_id" in sep.columns:
-        sep["sample_id"] = sep["sample_id"].astype(str)
+    sep = study_rows(manifest, ci.sepsis_study)
 
     _warn_missing_columns(sep, [mort["column"], micro["column"], pcol,
-                                t1["sex_columns"][0], acol], "table1_demographics")
+                                t1["sex_columns"][0], acol], "demographics")
     sep_patient = sep.drop_duplicates("sample_id").set_index("sample_id")
 
     healthy_df = None
     if ci.healthy_study:
         try:
-            h = clin.study(ci.healthy_study)
-            h["experiment_id"] = h["experiment_id"].astype(str)
-            if "sample_id" in h.columns:
-                h["sample_id"] = h["sample_id"].astype(str)
+            h = manifest.study(ci.healthy_study)
+            h["sample_id"] = h["sample_id"].astype(str)
             healthy_df = h
         except Exception as exc:  # noqa: BLE001
             print(f"  healthy study load failed: {exc}")
@@ -1876,9 +1855,9 @@ def table1_demographics(out, ci, preds, clin):
                     r = sep_patient.loc[pid]
                     mort_a.append(int(_is_true(r.get(mort["column"]))))
                     micro_a.append(int(_is_true(r.get(micro["column"]))))
-                    cat = _classify_pathogen(r.get(pcol), clin.spec)
+                    cat = _classify_pathogen(r.get(pcol), manifest.spec)
                     bact_a.append(int(cat == "bacterial")); viral_a.append(int(cat == "viral"))
-                    fem_a.append(int(_is_female(r.get(t1["sex_columns"][0]))))
+                    fem_a.append(int(_is_female(_first_value(r, t1["sex_columns"]))))
                     a = pd.to_numeric(r.get(acol), errors="coerce")
                     if pd.notna(a):
                         ages.append(a)
@@ -1887,9 +1866,9 @@ def table1_demographics(out, ci, preds, clin):
             if acol in uniq.columns:
                 a = pd.to_numeric(uniq[acol], errors="coerce")
                 ages = [v for v in a.tolist() if pd.notna(v)]
-            sex_col = next((c for c in t1["sex_columns"] if c in uniq.columns), None)
-            if sex_col:
-                fem_a = [int(_is_female(v)) for v in uniq[sex_col].tolist()]
+            sex = [_first_value(r, t1["sex_columns"]) for _, r in uniq.iterrows()]
+            if any(v is not None for v in sex):
+                fem_a = [int(_is_female(v)) for v in sex]
         return dict(sids=sids, n_exp=len(g), n_img=n_img, cells=cells, ok_cells=ok,
                     mort=sum(mort_a), micro=sum(micro_a), bact=sum(bact_a),
                     viral=sum(viral_a), fem=sum(fem_a),
@@ -1955,13 +1934,13 @@ def table1_demographics(out, ci, preds, clin):
         })
 
     df = pd.DataFrame(rows)
-    C.render_table(df, os.path.join(out, "table1_demographics"),
-                   title="Dataset demographics and support (cohort from database)")
+    C.render_table(df, os.path.join(out, "demographics"),
+                   title="Dataset demographics and support")
 
 
 # ===========================================================================
-# Table 3: cohort characteristics (median IQR / n/N per group), from the clinical
-# table; the patient groups come from the class config's sepsis label column
+# Cohort characteristics (median IQR / n/N per group) from the manifest's clinical
+# columns; the patient groups come from its label column
 # ===========================================================================
 def _med_iqr(series):
     s = pd.to_numeric(series, errors="coerce").dropna()
@@ -1988,48 +1967,6 @@ def _cat_pct(series, *values):
     want = {v.lower() for v in values}
     n = int(s.isin(want).sum())
     return f"{n}/{len(s)} ({100*n/len(s):.1f})"
-
-
-def _canon_race(value, race):
-    """Map a study's race string onto the shared vocabulary (spec `table3.race`).
-
-    Multi-race entries collapse to "Other" (so "Black or African American, White"
-    is one Other patient, not double-counted); ethnicity tokens are stripped
-    because the table reports Hispanic ethnicity separately -- see
-    _hispanic_from_race, which must read them BEFORE this strips them. A missing
-    race becomes "Unknown" rather than dropping out of the denominator, so the
-    column totals the cohort's N. Values already in the shared vocabulary pass
-    through unchanged.
-    """
-    if value is None or (isinstance(value, float) and np.isnan(value)):
-        return "Unknown"
-    s = str(value).strip().lower()
-    if not s or s == "nan":
-        return "Unknown"
-    for eth in race["ethnicity_tokens"]:
-        s = s.replace(eth, "")
-    tokens = race["tokens"]
-    mapped = {tokens[t] for t in (p.strip() for p in s.split(",")) if t in tokens}
-    if not mapped:
-        return "Unknown"
-    return "Other" if len(mapped) > 1 else mapped.pop()
-
-
-def _hispanic_from_race(value, race):
-    """Hispanic ethnicity for a study that folds it into the race multi-select.
-
-    Such a race field is the combined checkbox list, so "White, Other, Hispanic,
-    Latino/a, or Spanish origin" is a Hispanic donor. Absence of a Hispanic token
-    is read as not Hispanic (the donor did not tick it); a missing race stays
-    Unknown.
-    """
-    if value is None or (isinstance(value, float) and np.isnan(value)):
-        return "Unknown"
-    s = str(value).strip().lower()
-    if not s or s == "nan":
-        return "Unknown"
-    return (race["hispanic_yes"] if any(t in s for t in race["ethnicity_tokens"])
-            else race["hispanic_no"])
 
 
 def _count_level(df, col, value):
@@ -2076,76 +2013,38 @@ def _spec_rows(rows):
     return [(r["column"], r.get("label"), r["mode"]) for r in rows]
 
 
-def _table3_frame(ci, clin, spec_rows):
-    t3 = clin.spec["table3"]
-    gl, race = t3["groups"], t3["race"]
-    group_col = _group_col(ci)
-    neg_tokens = set(clin.spec["negative_tokens"])
+def _cohort_characteristics_frame(ci, manifest, spec_rows):
+    cc = manifest.spec["cohort_characteristics"]
+    gl = cc["groups"]
+    neg_tokens = set(manifest.spec["negative_tokens"])
 
-    sep = load_clinical_metadata(clin, ci.sepsis_study)
+    sep = study_rows(manifest, ci.sepsis_study)
     sep_pat = sep.drop_duplicates("sample_id").copy()
-    if race["column"] in sep_pat.columns:
-        sep_pat[race["column"]] = sep_pat[race["column"]].map(lambda v: _canon_race(v, race))
-    sp = pd.to_numeric(sep_pat.get(group_col), errors="coerce")
     groups = {
-        gl["positive"]: sep_pat[sp == 1],
-        gl["negative"]: sep_pat[sp == 0],
+        gl["positive"]: _label_rows(ci, sep_pat, ci.sepsis_idx),
+        gl["negative"]: _label_rows(ci, sep_pat, ci.neg_idx),
     }
     # experiment-level (pre-dedup) counts for the support row
-    sp_exp = pd.to_numeric(sep.get(group_col), errors="coerce")
-    exp_counts = {gl["positive"]: int((sp_exp == 1).sum()),
-                  gl["negative"]: int((sp_exp == 0).sum())}
+    exp_counts = {gl["positive"]: len(_label_rows(ci, sep, ci.sepsis_idx)),
+                  gl["negative"]: len(_label_rows(ci, sep, ci.neg_idx))}
 
     healthy = None
     n_exp_healthy = 0
     if ci.healthy_study:
-        try:
-            h = clin.study(ci.healthy_study)
-            # Apply the healthy class filter from the config (e.g.
-            # flowcell_type == "Thin") so the demographics describe the cohort
-            # the model actually uses, not every donor in the study.
-            try:
-                hdef = ci.class_definitions[ci.healthy_idx]
-                hcol, hval = hdef.get("column"), hdef.get("value")
-                if hcol and hval is not None and hcol in h.columns:
-                    mask = h[hcol].astype(str).str.strip().str.lower() == str(hval).strip().lower()
-                    h = h[mask]
-            except Exception:  # noqa: BLE001
-                pass
-            n_exp_healthy = len(h)  # experiments (before patient dedup)
-            if "sample_id" in h.columns:
-                h = h.drop_duplicates("sample_id")
-            h = h.copy()
-            rc, ec = race["column"], race["ethnicity_column"]
-            if rc in h.columns:
-                # Ethnicity first: the race string carries the Hispanic token that
-                # _canon_race strips. Never overwrite a real ethnicity column.
-                if ec not in h.columns:
-                    h[ec] = h[rc].map(lambda v: _hispanic_from_race(v, race))
-                h[rc] = h[rc].map(lambda v: _canon_race(v, race))
-            healthy = h
-        except Exception:
-            healthy = None
+        h = manifest.study(ci.healthy_study)
+        n_exp_healthy = len(h)  # experiments (before patient dedup)
+        healthy = h.drop_duplicates("sample_id")
 
     group_items = list(groups.items())
     if healthy is not None:
         group_items.append((gl["healthy"], healthy))
         exp_counts[gl["healthy"]] = n_exp_healthy
     cols = (["Characteristic"] + [f"{g} (N={len(d)})" for g, d in group_items]
-            + [t3["p_label"]])
+            + [cc["p_label"]])
     sepsis_df, icu_df = groups[gl["positive"]], groups[gl["negative"]]
     ng = len(group_items)
-    col_map = t3.get("healthy_column_map", {})
-
-    def _use(df, col):
-        return col if col in df.columns else col_map.get(col)
-
     def _num_cells(col):
-        out = []
-        for _, d in group_items:
-            u = _use(d, col)
-            out.append(_med_iqr(d[u]) if u is not None and u in d.columns else "")
-        return out
+        return [_med_iqr(d[col]) if col in d.columns else "" for _, d in group_items]
 
     def _level_cells(col, lvl):
         return [_cat_pct(d[col], lvl) if col in d.columns else "" for _, d in group_items]
@@ -2177,7 +2076,7 @@ def _table3_frame(ci, clin, spec_rows):
     for col, label, mode in spec_rows:
         if col not in sep_pat.columns:
             continue
-        lbl = label or _pretty_label(col, clin.spec["auto_labels"])
+        lbl = label or _pretty_label(col, manifest.spec["auto_labels"])
         if mode == "num":
             rows.append([lbl + ", median (IQR)"] + _num_cells(col) + [_p_cell(_pnum(col))])
         elif mode == "bin":
@@ -2204,7 +2103,7 @@ def _table3_frame(ci, clin, spec_rows):
             vals = sorted(v for v in sep_pat[col].dropna().astype(str).str.strip().unique()
                           if v.lower() not in neg_tokens)
             for v in vals:
-                rows.append(["    " + _expand_organisms(v, clin.spec["organisms"])]
+                rows.append(["    " + _expand_organisms(v, manifest.spec["organisms"])]
                             + _level_cells(col, v) + [""])
         elif mode == "diagnosis":
             rows.append([lbl + ", n/N (%)"] + [""] * ng + [""])
@@ -2215,7 +2114,7 @@ def _table3_frame(ci, clin, spec_rows):
             # the two, alphabetical within each block so the order is reproducible.
             # Diagnoses claimed by neither group belong to indeterminate patients
             # (null group label, outside this analysis) and are dropped: they
-            # would otherwise add all-zero rows to a cohort table.
+            # would otherwise add all-zero rows to the table.
             def _dx_rank(v, _col=col):
                 for rank, d in ((0, sepsis_df), (1, icu_df)):
                     if _count_level(d, _col, v):
@@ -2232,9 +2131,9 @@ def _table3_frame(ci, clin, spec_rows):
     return pd.DataFrame(rows, columns=cols)
 
 
-def _table3_paper_format(df, spec_rows, manuscript):
+def _manuscript_format(df, spec_rows, manuscript):
     """Manuscript format: 'N (%)' labels and cells without the /N denominator,
-    manuscript row set only (spec `table3.manuscript`), and pathogen sub-rows
+    manuscript row set only (spec `cohort_characteristics.manuscript`), and pathogen sub-rows
     restricted to organisms present in the sepsis or ICU-control cohort."""
     import re
     cols = list(df.columns)
@@ -2267,21 +2166,21 @@ def _table3_paper_format(df, spec_rows, manuscript):
     return pd.DataFrame(rows, columns=cols)
 
 
-def table3_cohort_characteristics(out, ci, preds, clin):
+def cohort_characteristics(out, ci, preds, manifest):
     """Cohort demographics / labs (median (IQR), N (%)) per group.
 
-    table3_cohort_characteristics is the full table (spec `table3.rows`);
-    table3_cohort_characteristics_with_lymphocytes is the manuscript version: the
+    cohort_characteristics is the full table (spec `cohort_characteristics.rows`);
+    cohort_characteristics_manuscript is the manuscript version: the
     spec's `manuscript.insert_rows` added, in manuscript format
-    (_table3_paper_format)."""
-    t3 = clin.spec["table3"]
-    rows = _spec_rows(t3["rows"])
-    C.render_table(_table3_frame(ci, clin, rows),
-                   os.path.join(out, "table3_cohort_characteristics"),
-                   title=t3["title"], fontsize=6)
+    (_manuscript_format)."""
+    cc = manifest.spec["cohort_characteristics"]
+    rows = _spec_rows(cc["rows"])
+    C.render_table(_cohort_characteristics_frame(ci, manifest, rows),
+                   os.path.join(out, "cohort_characteristics"),
+                   title=cc["title"], fontsize=6)
 
-    man = t3["manuscript"]
-    sep_cols = clin.study(ci.sepsis_study).columns
+    man = cc["manuscript"]
+    sep_cols = manifest.study(ci.sepsis_study).columns
     spec = list(rows)
     for ins in man.get("insert_rows", []):
         if ins["column"] not in sep_cols:
@@ -2289,34 +2188,33 @@ def table3_cohort_characteristics(out, ci, preds, clin):
         anchor = [i for i, (c, _, _) in enumerate(spec) if c == ins["after"]]
         spec.insert(anchor[0] + 1 if anchor else len(spec),
                     (ins["column"], ins.get("label"), ins["mode"]))
-    raw = _table3_frame(ci, clin, spec).fillna("").astype(str)
-    C.render_table(_table3_paper_format(raw, spec, man),
-                   os.path.join(out, "table3_cohort_characteristics_with_lymphocytes"),
-                   title=t3["title"], fontsize=6)
+    raw = _cohort_characteristics_frame(ci, manifest, spec).fillna("").astype(str)
+    C.render_table(_manuscript_format(raw, spec, man),
+                   os.path.join(out, "cohort_characteristics_manuscript"),
+                   title=cc["title"], fontsize=6)
 
 
-def table_icu_control_diagnoses(out, ci, preds, clin):
+def icu_control_diagnoses(out, ci, preds, manifest):
     """Per-patient clinical diagnosis for the ICU-control (sepsis-negative)
     patients -- the non-septic reasons they were admitted (diagnosis notes +
     pathogen). Parallels the sepsis-positive pathogen information."""
     if ci.neg_idx is None:
         print("  ICU-control diagnoses skipped: no ICU-control class")
         return "skip"
-    dxs = clin.spec["diagnosis"]
-    neg = set(clin.spec["negative_tokens"])
-    sep = load_clinical_metadata(clin, ci.sepsis_study)
-    sp = pd.to_numeric(sep.get(_group_col(ci)), errors="coerce")
-    icu = sep[sp == 0].drop_duplicates("sample_id")
+    dxs = manifest.spec["diagnosis"]
+    neg = set(manifest.spec["negative_tokens"])
+    sep = study_rows(manifest, ci.sepsis_study)
+    icu = _label_rows(ci, sep, ci.neg_idx).drop_duplicates("sample_id")
     rows = []
     for _, r in icu.iterrows():
-        dx = str(r.get(dxs["notes_column"]) or "").strip()
-        pth = str(r.get(dxs["pathogen_column"]) or "").strip()
+        dx = _text(r.get(dxs["notes_column"]))
+        pth = _text(r.get(dxs["pathogen_column"]))
         rows.append({"Sample ID": str(r.get("sample_id", "")),
-                     "Diagnosis": dx if dx.lower() not in neg else "—",
-                     "Pathogen": pth if pth.lower() not in neg else "—"})
+                     "Diagnosis": dx if dx and dx.lower() not in neg else "—",
+                     "Pathogen": pth if pth and pth.lower() not in neg else "—"})
     rows.sort(key=lambda x: x["Sample ID"])
     df = pd.DataFrame(rows, columns=["Sample ID", "Diagnosis", "Pathogen"])
-    C.render_table(df, os.path.join(out, "table_icu_control_diagnoses"),
+    C.render_table(df, os.path.join(out, "icu_control_diagnoses"),
                    title=f"ICU-control patient diagnoses (sepsis-negative, N={len(df)})",
                    fontsize=6)
     print(f"  ICU-control diagnoses: {len(df)} patients")
@@ -2366,7 +2264,7 @@ def _indet_bag_sd(sub):
         return np.nanmean(per, axis=tuple(range(per.ndim - 1)))
 
 
-def suptable3_indeterminate(out, ci, args):
+def indeterminate_patients(out, ci, args):
     """Indeterminate patients: clinical diagnosis vs the LOO ensemble's call.
 
     These patients have a recorded clinical diagnosis but no adjudicated
@@ -2392,14 +2290,14 @@ def suptable3_indeterminate(out, ci, args):
               f"model has {len(ci.class_names)}")
         return "skip"
 
-    dxs = args.clin.spec["diagnosis"]
-    sep = load_clinical_metadata(args.clin, ci.sepsis_study)
+    dxs = args.manifest.spec["diagnosis"]
+    sep = study_rows(args.manifest, ci.sepsis_study)
     dx = sep.drop_duplicates("sample_id").set_index("sample_id")
-    neg = set(args.clin.spec["negative_tokens"])
+    neg = set(args.manifest.spec["negative_tokens"])
 
     def _clean(sid, col):
-        v = str(dx[col].get(sid, "") or "").strip() if col in dx.columns else ""
-        return v if v.lower() not in neg else "—"
+        v = _text(dx[col].get(sid)) if col in dx.columns else ""
+        return v if v and v.lower() not in neg else "—"
 
     rows = []
     for sid in sorted(set(sample_ids)):
@@ -2434,7 +2332,7 @@ def suptable3_indeterminate(out, ci, args):
         "\n".join(textwrap.wrap(str(v), 46)) or "—" for v in df["Clinical Diagnosis"]
     ]
     C.render_table(
-        render_df, os.path.join(out, "suptable3_indeterminate"),
+        render_df, os.path.join(out, "indeterminate_patients"),
         title=(f"Indeterminate patients (no adjudicated label, N={len(df)}): "
                f"clinical diagnosis vs LOO ensemble prediction\n"
                f"{_indet_run_label(z)}; ± = between-fold SD"),
@@ -2443,8 +2341,8 @@ def suptable3_indeterminate(out, ci, args):
           f"({n_folds} folds x {n_repeats} repeats) from {os.path.basename(path)}")
 
 
-def suptable3b_indeterminate_experiments(out, ci, args):
-    """Per-experiment breakdown behind suptable3 -- shows replicate agreement."""
+def indeterminate_experiments(out, ci, args):
+    """Per-experiment breakdown behind indeterminate_patients -- shows replicate agreement."""
     z, path = _load_indeterminate_npz(args)
     if z is None:
         print(f"  indeterminate per-experiment table skipped: {path} missing")
@@ -2474,7 +2372,7 @@ def suptable3b_indeterminate_experiments(out, ci, args):
 
     df = pd.DataFrame(rows).sort_values(["Sample ID", "Experiment ID"])
     C.render_table(
-        df, os.path.join(out, "suptable3b_indeterminate_experiments"),
+        df, os.path.join(out, "indeterminate_experiments"),
         title=(f"Indeterminate experiments (N={len(df)}): per-experiment LOO "
                f"ensemble predictions\n{_indet_run_label(z)}; "
                f"± = between-fold SD"),
@@ -2483,7 +2381,7 @@ def suptable3b_indeterminate_experiments(out, ci, args):
 
 
 # ===========================================================================
-# Table 4: pairwise operating points
+# Pairwise operating points
 # ===========================================================================
 def _op_point(y_bin, y_sc, mode, closest=False):
     """Return threshold for an operating point. mode: youden|sens95|maxsens.
@@ -2516,7 +2414,7 @@ def _pairwise_op_rows(ci, y_true, y_probs, closest_target=False,
 
     ``include_argmax`` adds the two 3-class decision rules as extra rows so the
     table can be read against the confusion matrices: the Youden-shifted argmax
-    used by the Fig 1 confusion matrix, and the model's raw argmax. Those rules score on
+    used by the roc_confusion_umap confusion matrix, and the model's raw argmax. Those rules score on
     the FULL 3-class probability vector, so they need not coincide with the
     Youden-J point of the renormalized pairwise ROC -- when the ROC has near-tied
     J values they can land on a very different sensitivity/specificity trade.
@@ -2636,31 +2534,32 @@ def _pairwise_op_rows(ci, y_true, y_probs, closest_target=False,
     return pd.DataFrame(rows)
 
 
-def table4_pairwise(out, ci, preds, closest_target=False):
+def pairwise_operating_points(out, ci, preds, closest_target=False):
     df = _pairwise_op_rows(ci, preds["y_true"], preds["y_probs"],
                            closest_target=closest_target)
-    C.render_table(df, os.path.join(out, "table4_pairwise_operating_points"),
+    C.render_table(df, os.path.join(out, "pairwise_operating_points"),
                    title="Pairwise operating points")
 
 
-def table4b_pairwise_sample_average(out, ci, preds, args):
-    """table4 on the sample-averaged (patient-level) predictions, plus the two
-    3-class argmax rules so the numbers line up with the Fig 1 (patient-level)
-    confusion matrix.
+def pairwise_operating_points_patient(out, ci, preds, args):
+    """pairwise_operating_points on the sample-averaged (patient-level)
+    predictions, plus the two 3-class argmax rules so the numbers line up with the
+    roc_confusion_umap (patient-level) confusion matrix.
 
-    Identical by construction to table4 in the patient_level_combined dir; this
-    variant puts the patient-level operating points in the experiment-level dir.
+    Identical by construction to pairwise_operating_points in the
+    patient_level_combined dir; this variant puts the patient-level operating
+    points in the experiment-level dir.
     """
     yt_avg, yp_avg, n_pat = _sample_average_preds(preds)
     df = _pairwise_op_rows(ci, yt_avg, yp_avg, closest_target=True,
                            include_argmax=True)
-    C.render_table(df, os.path.join(out, "table4b_pairwise_sample_average"),
+    C.render_table(df, os.path.join(out, "pairwise_operating_points_patient"),
                    title=f"Pairwise operating points (sample-averaged, n={n_pat} patients)")
-    print(f"  table4b pairwise (sample-averaged, n={n_pat}) written")
+    print(f"  pairwise operating points (sample-averaged, n={n_pat}) written")
 
 
 # ===========================================================================
-# Supplementary Fig 9: per-experiment sampling variability vs bag size
+# Bag-size variability: per-experiment sampling variability vs bag size
 #   Each held-out experiment is scored by its own fold's epoch-N aggregation head
 #   on bags sampled from its cached per-image embeddings (loo-per-image), at every
 #   bag size x seed. P(true class) is the bag-level softmax prob assigned to the
@@ -2714,10 +2613,10 @@ def _bag_probs_from_feats(model, pool_feats, bag, rng):
         return torch.softmax(logits, dim=-1).cpu().numpy()[0]
 
 
-def bagvar_per_experiment(out, cv_dir, args, ci, preds):
+def bag_size_variability_per_experiment(out, cv_dir, args, ci, preds):
     """Long-form bag-level class probabilities, one row per (experiment,
     bag_size, seed), from the epoch-N cached per-image embeddings (no re-encode).
-    Writes supfig9_bagvar_per_experiment.csv and returns the frame. GPU."""
+    Writes bag_size_variability_per_experiment.csv and returns the frame. GPU."""
     import torch
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -2774,11 +2673,11 @@ def bagvar_per_experiment(out, cv_dir, args, ci, preds):
                 row[c] = float(pv[j])
             rows.append(row)
     per_exp = pd.DataFrame(rows).sort_values(["experiment_id", "bag_size", "seed"])
-    per_exp.to_csv(os.path.join(out, "supfig9_bagvar_per_experiment.csv"), index=False)
+    per_exp.to_csv(os.path.join(out, "bag_size_variability_per_experiment.csv"), index=False)
     return per_exp
 
 
-def _bagvar_ptrue(per_exp, ci):
+def _p_true(per_exp, ci):
     """Return per_exp with a `p_true` column = P(assigned to the true class)."""
     df = per_exp.copy()
     prob_lookup = {n: f"prob_{n}" for n in ci.class_names}
@@ -2787,14 +2686,14 @@ def _bagvar_ptrue(per_exp, ci):
     return df
 
 
-def supfig9_bagvar_ribbons(out, ci, per_exp):
+def bag_size_variability(out, ci, per_exp):
     """Within-experiment SD of P(true class) vs bag size.
 
     Thin lines = individual experiments (colored by true class); bold lines =
     per-class mean SD across experiments. Quantifies how sampling (shuffle)
     variability shrinks as the bag grows."""
     style.apply()
-    df = _bagvar_ptrue(per_exp, ci)
+    df = _p_true(per_exp, ci)
     n_shuffles = df["seed"].nunique()
     color_of = dict(zip(ci.class_names, style.class_colors_muted(ci.class_names)))
 
@@ -2828,44 +2727,44 @@ def supfig9_bagvar_ribbons(out, ci, per_exp):
     ax.legend(title="class mean (bold)", loc="upper right")
     style.trim_spines(ax)
     fig.tight_layout()
-    fig.savefig(os.path.join(out, "supfig9_bagvar_ribbons.png"))
+    fig.savefig(os.path.join(out, "bag_size_variability.png"))
     plt.close(fig)
 
 
 # ===========================================================================
-# Fig 2: informative cells (occlusion screen) + per-class Grad-CAM frames
+# Cell occlusion figure: informative cells (occlusion screen) + per-class Grad-CAM frames
 # ===========================================================================
 # Inputs: the `remo-id analysis occlusion` work dir of the held-out screen
 # (--occlusion_dir: experiments/, screen/stage1/, report/screen_cells.parquet; run per
-# LOO fold by occlusion_fold.py) and --cohort (scope). Everything shown is chosen by rule
+# LOO fold by occlusion_fold.py) and the manifest (scope). Everything shown is chosen by rule
 # (remo_id.interpret.cell_occlusion.select_informative_cells / select_example_frames):
 #   a  per class (rows Sepsis / ICU control / Healthy) the 10 cells whose single removal
 #      lowers the held-out model's true-class log-odds most beyond the sham (remove -
 #      sham), beating the equal-area null, not at the border, frame correct; one cell per
-#      experiment; the top FIG2_TYPE_QUOTA white and red cells (free slots: next best of
-#      any type); white cells first. Healthy cells only from FIG2_HEALTHY_SCOPE, the scope
+#      experiment; the top OCC_TYPE_QUOTA white and red cells (free slots: next best of
+#      any type); white cells first. Healthy cells only from OCC_HEALTHY_SCOPE, the scope
 #      shared with the patients.
 #   b, c  one ICU-control and one Sepsis frame: correct, 0.6 < P(true) < 0.99, cells cover
 #      <= 55% of the frame, in focus (Laplacian variance in the top quartile of the
 #      experiment's screened frames), ranked by total |stage-1 effect|, one candidate per
 #      experiment, rank 1; tinted by per-class Grad-CAM of the held-out model.
 # Ties are broken by a seeded random key (--seed). Picks, crops and Grad-CAMs are cached
-# in --fig2_cache, so a re-render reads the cache only.
-FIG2_HEALTHY_SCOPE = "lfm-ohmu"
-FIG2_TYPE_QUOTA = {"wbc": 5, "rbc": 5}
-FIG2_N = 10                 # crops per class row
-FIG2_WINDOW = 128           # crop px: every WBC (p99 ~87 px, largest ~97 px) whole + one ring of RBCs
-FIG2_TITLE_A = "Informative cells per class"
-FIG2_LABEL_W_MM = 20.0
-FIG2_COLNUM_H = 3.4         # mm reserved above the rows for column numbers
-FIG2_CAM_ALPHA = 0.60       # max overlay opacity of the per-class Grad-CAM tint
-FIG2_CAM_THRESHOLD = 0.30   # only the strongest Grad-CAM peaks are tinted
-FIG2_BG_VALUE = 225.0       # display transmission = raw / 225, the models' input scaling
+# in --occlusion_cache, so a re-render reads the cache only.
+OCC_HEALTHY_SCOPE = "lfm-ohmu"
+OCC_TYPE_QUOTA = {"wbc": 5, "rbc": 5}
+OCC_N = 10                 # crops per class row
+OCC_WINDOW = 128           # crop px: every WBC (p99 ~87 px, largest ~97 px) whole + one ring of RBCs
+OCC_TITLE_A = "Informative cells per class"
+OCC_LABEL_W_MM = 20.0
+OCC_COLNUM_H = 3.4         # mm reserved above the rows for column numbers
+OCC_CAM_ALPHA = 0.60       # max overlay opacity of the per-class Grad-CAM tint
+OCC_CAM_THRESHOLD = 0.30   # only the strongest Grad-CAM peaks are tinted
+OCC_BG_VALUE = 225.0       # display transmission = raw / 225, the models' input scaling
 # Layout in POINTS. The canvas is exactly one double column (style.DOUBLE) wide at a dpi
 # fixed by the row width: two 1032 x 772 frames scaled to a 700-px row height,
 # int(1032 * 700 / 772) = 935 px each.
-FIG2_MARGIN_PT, FIG2_GAP_PT, FIG2_ROW_GAP_PT = 6, 8, 8
-FIG2_ROW_W_PX = 2 * 935
+OCC_MARGIN_PT, OCC_GAP_PT, OCC_ROW_GAP_PT = 6, 8, 8
+OCC_ROW_W_PX = 2 * 935
 
 
 class _Canvas:
@@ -2905,7 +2804,7 @@ def _pil_font(size, bold=True):
     return ImageFont.load_default()
 
 
-class _Fig2Contrast:
+class _CropContrast:
     """Display mapping: transmission (raw / background value, the model's input scaling),
     a linear window = pooled p0.5-p99.8 of every gallery crop (frozen), then an unsharp
     mask (Gaussian radius 1.0 px, amount 0.4)."""
@@ -2927,7 +2826,7 @@ class _Fig2Contrast:
                        0, 1)
 
 
-def _fig2_picks(ci, args, cache):
+def _occlusion_picks(ci, args, cache):
     """Gallery cells and the two frames, chosen by rule (cached as CSV)."""
     from remo_id.interpret.cell_occlusion import (recorded_experiments, select_example_frames,
                                                   select_informative_cells)
@@ -2935,17 +2834,14 @@ def _fig2_picks(ci, args, cache):
     if os.path.exists(gal_csv) and os.path.exists(fr_csv):
         return (pd.read_csv(gal_csv, dtype={"experiment_id": str}),
                 pd.read_csv(fr_csv, dtype={"experiment_id": str}))
-    if not args.cohort:
-        raise ValueError("Fig 2 needs --cohort (scope column) for the healthy-scope rule")
-    ct = C.load_cohort_table(args.cohort)
-    scope = dict(zip(ct["experiment_id"], ct["scope"]))
+    scope = args.manifest.scope_map()
     ex = recorded_experiments(args.occlusion_dir)
     shown = ex[(ex["y_true"] != ci.healthy_idx)
-               | (ex["experiment_id"].map(scope) == FIG2_HEALTHY_SCOPE)]["experiment_id"]
+               | (ex["experiment_id"].map(scope) == OCC_HEALTHY_SCOPE)]["experiment_id"]
     cells = pd.read_parquet(os.path.join(args.occlusion_report, "screen_cells.parquet"))
     cells["experiment_id"] = cells["experiment_id"].astype(str)
-    gal = select_informative_cells(cells[cells["experiment_id"].isin(set(shown))], n=FIG2_N,
-                                   type_quota=FIG2_TYPE_QUOTA, seed=args.seed)
+    gal = select_informative_cells(cells[cells["experiment_id"].isin(set(shown))], n=OCC_N,
+                                   type_quota=OCC_TYPE_QUOTA, seed=args.seed)
     frames = select_example_frames(args.occlusion_dir, classes=[ci.neg_idx, ci.sepsis_idx],
                                    experiments=set(shown), seed=args.seed)
     meta = ex[["experiment_id", "path", "checkpoint"]]
@@ -2957,7 +2853,7 @@ def _fig2_picks(ci, args, cache):
     return gal, frames
 
 
-def _fig2_crops(gal, cache):
+def _occlusion_crops(gal, cache):
     """Raw crop + the cell's own mask per gallery cell, cut once from the zarr stacks."""
     from PIL import Image
     from remo_id.interpret.cell_occlusion import open_frames, open_masks, read_stack
@@ -2969,7 +2865,7 @@ def _fig2_crops(gal, cache):
         if not os.path.exists(stem + "_mask.png"):
             frames, masks = open_frames(rd["path"]), open_masks(rd["path"])
             H, W = frames.shape[0], frames.shape[1]
-            iid, lab, w = int(rd["image_id"]), int(rd["label"]), FIG2_WINDOW
+            iid, lab, w = int(rd["image_id"]), int(rd["label"]), OCC_WINDOW
             y0 = int(np.clip(int(round(rd["centroid_y"])) - w // 2, 0, H - w))
             x0 = int(np.clip(int(round(rd["centroid_x"])) - w // 2, 0, W - w))
             crop = read_stack(frames, [iid])[0][y0:y0 + w, x0:x0 + w]
@@ -2983,7 +2879,7 @@ def _fig2_crops(gal, cache):
     return out
 
 
-def _fig2_cams(frame_rows, cache):
+def _occlusion_cams(frame_rows, cache):
     """Per-class Grad-CAM of each chosen frame by its held-out fold model (cached npz)."""
     from remo_id.interpret.gradcam import frame_class_gradcams
     d = os.path.join(cache, "cams")
@@ -2999,10 +2895,10 @@ def _fig2_cams(frame_rows, cache):
     return out
 
 
-def _fig2_gallery(cv, x, y, width, rows, display, colors, dry=False, shade_alpha=0.4):
+def _occlusion_gallery(cv, x, y, width, rows, display, colors, dry=False, shade_alpha=0.4):
     """One row per class, uniform gutters, bold row labels in a left column, column
     numbers on top; everything outside the informative cell tinted in the class colour."""
-    n, label_w, gut, head = FIG2_N, FIG2_LABEL_W_MM, 0.6, FIG2_COLNUM_H
+    n, label_w, gut, head = OCC_N, OCC_LABEL_W_MM, 0.6, OCC_COLNUM_H
     side = (width - label_w - gut * (n - 1)) / n
     H = head + len(rows) * (side + gut) - gut
     if dry:
@@ -3031,45 +2927,45 @@ def _fig2_gallery(cv, x, y, width, rows, display, colors, dry=False, shade_alpha
     return H
 
 
-def fig2_interpretability_occlusion(out, ci, args):
-    """Fig 2: a) informative cells per class from the occlusion screen; b) ICU-control
+def cell_occlusion_interpretability(out, ci, args):
+    """a) Informative cells per class from the occlusion screen; b) ICU-control
     and c) Sepsis frame with a per-class Grad-CAM tint (rules above)."""
     import io
     from PIL import Image, ImageDraw
     from remo_id.interpret.overlays import class_tint_overlay
     if not os.path.exists(os.path.join(args.occlusion_report, "screen_cells.parquet")):
-        print(f"  fig2 skipped: no screen_cells.parquet in {args.occlusion_report} "
+        print(f"  skipped: no screen_cells.parquet in {args.occlusion_report} "
               "(run `remo-id analysis occlusion`)")
         return "skip"
     style.apply()
-    cache = args.fig2_cache
-    gal, frames = _fig2_picks(ci, args, cache)
-    crops = _fig2_crops(gal, cache)
+    cache = args.occlusion_cache
+    gal, frames = _occlusion_picks(ci, args, cache)
+    crops = _occlusion_crops(gal, cache)
     chosen = frames[frames["cand_rank"] == 1].set_index("y_true")
-    tiles = _fig2_cams(chosen.loc[[ci.neg_idx, ci.sepsis_idx]].reset_index(), cache)
+    tiles = _occlusion_cams(chosen.loc[[ci.neg_idx, ci.sepsis_idx]].reset_index(), cache)
     names = [ci.class_names[i] for i in ci.display_order]
     colors = dict(zip(names, style.class_colors_muted(names)))
-    display = _Fig2Contrast([c for c, _ in crops], FIG2_BG_VALUE, args.seed)
+    display = _CropContrast([c for c, _ in crops], OCC_BG_VALUE, args.seed)
     by_cls = {}
     for (img, m), rd in zip(crops, gal.to_dict("records")):
         by_cls.setdefault(int(rd["y_true"]), []).append((int(rd["slot"]), (img, m)))
     rows = [(ci.class_names[i], [v for _, v in sorted(by_cls[i], key=lambda t: t[0])])
             for i in ci.display_order if i in by_cls]
 
-    content_in = style.DOUBLE - (2 * FIG2_MARGIN_PT + FIG2_GAP_PT) / 72.0
-    dpi = FIG2_ROW_W_PX / content_in
+    content_in = style.DOUBLE - (2 * OCC_MARGIN_PT + OCC_GAP_PT) / 72.0
+    dpi = OCC_ROW_W_PX / content_in
     label_font = _pil_font(style.pt_to_px(style.PANEL_LABEL_PT, dpi), bold=True)
     title_font = _pil_font(style.pt_to_px(style.font_pt("axes.titlesize"), dpi), bold=True)
-    gap = style.pt_to_px(FIG2_GAP_PT, dpi)
-    row_gap = style.pt_to_px(FIG2_ROW_GAP_PT, dpi)
-    margin = style.pt_to_px(FIG2_MARGIN_PT, dpi)
+    gap = style.pt_to_px(OCC_GAP_PT, dpi)
+    row_gap = style.pt_to_px(OCC_ROW_GAP_PT, dpi)
+    margin = style.pt_to_px(OCC_MARGIN_PT, dpi)
     label_h = style.pt_to_px(max(style.PANEL_LABEL_PT, style.font_pt("axes.titlesize")) + 3, dpi)
-    content_w = FIG2_ROW_W_PX + gap
+    content_w = OCC_ROW_W_PX + gap
 
     # panel a: gallery rendered at exactly content_w px wide
     w_mm = content_w / dpi * 25.4
-    cv = _Canvas(w_mm, _fig2_gallery(None, 0, 0, w_mm, rows, display, colors, dry=True))
-    _fig2_gallery(cv, 0, 0, w_mm, rows, display, colors)
+    cv = _Canvas(w_mm, _occlusion_gallery(None, 0, 0, w_mm, rows, display, colors, dry=True))
+    _occlusion_gallery(cv, 0, 0, w_mm, rows, display, colors)
     buf = io.BytesIO()
     cv.fig.savefig(buf, dpi=dpi, facecolor="white", format="png")
     plt.close(cv.fig)
@@ -3078,7 +2974,7 @@ def fig2_interpretability_occlusion(out, ci, args):
         pad = Image.new("RGB", (content_w, gal_im.height), (255, 255, 255))
         pad.paste(gal_im.crop((0, 0, min(content_w, gal_im.width), gal_im.height)), (0, 0))
         gal_im = pad
-    label_px = int(round(FIG2_LABEL_W_MM / 25.4 * dpi))
+    label_px = int(round(OCC_LABEL_W_MM / 25.4 * dpi))
 
     # panels b, c: per-class Grad-CAM tint over the frame in the gallery's display mapping
     tile_w = (content_w - gap) // 2
@@ -3087,7 +2983,7 @@ def fig2_interpretability_occlusion(out, ci, args):
     for cams, raw in tiles:
         raw = raw if raw.ndim == 2 else raw[..., 0]
         rgb = class_tint_overlay(display(raw.astype(np.uint8)), cams, cam_colors,
-                                 threshold=FIG2_CAM_THRESHOLD, alpha=FIG2_CAM_ALPHA)
+                                 threshold=OCC_CAM_THRESHOLD, alpha=OCC_CAM_ALPHA)
         t = Image.fromarray((rgb * 255).astype(np.uint8))
         pil_tiles.append(t.resize((tile_w, int(round(t.height * tile_w / t.width))),
                                   Image.LANCZOS))
@@ -3104,9 +3000,9 @@ def fig2_interpretability_occlusion(out, ci, args):
                   font=title_font, anchor="mt")
         canvas.paste(img, (tx, y_t + label_h))
     draw.text((margin, margin), "a", fill=(0, 0, 0), font=label_font, anchor="lt")
-    draw.text((margin + label_px + (content_w - label_px) // 2, margin + 2), FIG2_TITLE_A,
+    draw.text((margin + label_px + (content_w - label_px) // 2, margin + 2), OCC_TITLE_A,
               fill=(0, 0, 0), font=title_font, anchor="mt")
     canvas.paste(gal_im, (margin, margin + label_h))
-    path = os.path.join(out, "fig2_interpretability_occlusion.png")
+    path = os.path.join(out, "cell_occlusion_interpretability.png")
     canvas.save(path, dpi=(dpi, dpi))
     print(f"  wrote {path} ({canvas.width}x{canvas.height} px @ {dpi:.1f} dpi); picks in {cache}")

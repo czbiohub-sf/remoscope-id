@@ -9,10 +9,10 @@ per-cell embeddings.
 
 This repository is the code companion to the publication below.
 
-> **TITLE TBD.** Authors TBD. *medRxiv* (link TBD). DOI TBD.
+> **Rapid Sepsis Diagnosis in Critically Ill Adults with Remoscope Label-Free Whole-Blood Imaging** Nicholas Bratvold, Ilakkiyan Jeyakumar, Michelle Khoo, Gregory Suematsu, Olivia Chao, Tal Shwartzman, Andrew Willmore, Julia Hutchinson, Carolyn S. Calfee, Michael A. Matthay, Natasha Spottiswoode, Charles R. Langelier* and Paul M. Lebel* *medRxiv* (link TBD). DOI TBD.
 
 [`examples/sepsis_paper/`](examples/sepsis_paper/) shows how remo-id was configured and run for
-the sepsis study (class config, training and LOO evaluation commands, the cell occlusion
+the sepsis paper (class config, training and LOO evaluation commands, the cell occlusion
 screen, figure and table builders); use it as a template for your own data. The rest of the
 repository is a general framework you can point at your own data.
 
@@ -46,8 +46,7 @@ Bioengineering group.
   (gated attention, mean, max, linear/mi-Net, top-k, transformer or additive) predicts the
   experiment label.
 - **Embedding-MIL:** the same pooling heads trained directly on precomputed per-cell
-  embeddings from any embedding model. There is no image backbone, so it scales to millions
-  of cells per experiment.
+  embeddings from any embedding model.
 - **Data handling:**
   - Train/validation splits are grouped by sample, so technical replicates of the same
     blood sample never straddle the split.
@@ -65,7 +64,6 @@ Bioengineering group.
 ## Installation
 
 Requirements:
-- Linux.
 - Python 3.12.
 - A CUDA GPU for training. CPU works for tests and small runs (`--accelerator auto` picks the GPU when one is available).
 
@@ -73,8 +71,8 @@ Requirements:
 used for the paper.
 
 ```bash
-git clone https://github.com/czbiohub-sf/remo-id-public.git
-cd remo-id-public
+git clone https://github.com/czbiohub-sf/remoscope-id.git
+cd remoscope-id
 uv sync --extra dev            # creates .venv from uv.lock (includes pytest)
 source .venv/bin/activate
 remo-id --help
@@ -88,6 +86,7 @@ To use pip instead, run `pip install -e ".[dev]"`. The dependencies are declared
 variables (`WANDB_API_KEY`, `WANDB_ENTITY`, `WANDB_BASE_URL` for a private server). Set
 `WANDB_MODE=offline` or `WANDB_MODE=disabled` to run without an account.
 
+(note this repo has only been tested on Linux.)
 ## Quickstart on synthetic data
 
 ```bash
@@ -116,7 +115,7 @@ IDs), plus post-training predictions. The default `--save_dir` is `$REMO_ID_SAVE
 
 Each experiment is a directory holding one image stack: a `uint8` zarr array of shape
 `[H, W, N]` stored in a `.zip` file (zarr `ZipStore`). Frame `i` is `array[:, :, i]`. You can
-optionally add a flat-field background image `<dirname>background_p99.png` next to it.
+optionally add a flat-field background image `<dirname>background_p99.png` next to it if you want to remove background batch effects acquisition to acquisition.
 
 ```python
 import zarr
@@ -134,12 +133,13 @@ A manifest lists the experiments and their labels. See
 
 | column | required | meaning |
 |---|---|---|
-| `experiment_id` | yes | unique integer ID |
+| `experiment_id` | yes | unique acquisition ID |
 | `path` | yes | experiment directory (relative paths are resolved against the manifest's folder) |
 | `num_images` | yes | number of frames in the stack |
 | `label` | yes | class name (`--label_column` selects another column) |
-| `sample_id` | no | blood-sample ID: experiments with the same `sample_id` always land in the same split |
+| `sample_id` | no | sample ID: experiments with the same `sample_id` always land in the same split |
 | `study_id`, `site` | no | grouping metadata carried into reports |
+| any other column | no | kept as read (e.g. `scope`, clinical variables) |
 
 Pass the manifest with `--manifest manifest.csv`.
 - **Class order:** classes are sorted by name. Set the order explicitly with
@@ -149,7 +149,7 @@ Pass the manifest with `--manifest manifest.csv`.
 The class definitions are saved with the checkpoint (`*.classes.yaml`). Every downstream
 command (`infer`, `analysis`, `workflow`) can then reuse them through `--class_config`.
 
-### Bring your own embeddings (embedding-MIL)
+### Using precomputed embeddings (embedding-MIL)
 
 `--model embedding-mil` reads one store per experiment, colocated in the experiment
 directory: `{experiment_path}/{experiment_id}_emb__{model_version}.zarr`. Any model that
@@ -172,18 +172,20 @@ platelet) and samples bags with per-class weights.
 - Each embedding's row in that table is given by `regionprops_row`.
 - See [`examples/cell_configs/wbc_rbc_plt.yaml`](examples/cell_configs/wbc_rbc_plt.yaml).
 
-Without a cell config, all embeddings form a single pool (capped at `--pool_cap`). Never mix
-embeddings from different models in one run: the loader checks that every store has the
-same `model_config_hash`.
+Without a cell config, all embeddings form a single pool (capped at `--pool_cap`). The loader checks that every store has the
+same `model_config_hash` to stop different models from being used at the same time.
 
 ### Remoscope database (CZ Biohub internal)
 
-Inside CZ Biohub, data can also be selected straight from the internal Remoscope database
+Data can also be selected straight from the internal Remoscope database
 with `--class_config classes.yaml` or with `--study_id/--database_column/--database_label`.
 This needs the private `remoscope-database` package, which is not a dependency of this
-repository. With a manifest you never need it.
+repository. 
+
+It is strongly recommended to set up your own database to store your data. The manifest.csv was created as a workaround but organizing data into an opinionated and structured format allows for data processing pipelines, training, and analysis to be streamlined and requires no management of various floating csv files. It is simple to implement, will save many hours, and is very well documented online.
 
 ## Models
+Here are some options, add more as needed. 
 
 | `--model` | type | backbone |
 |---|---|---|
@@ -198,6 +200,7 @@ repository. With a manifest you never need it.
 | `embedding-mil` | MIL on embeddings | none (precomputed embeddings) |
 
 The MIL pooling head is chosen with `--pooling`:
+(also add more as needed)
 
 | `--pooling` | what it does |
 |---|---|
@@ -356,9 +359,8 @@ sbatch scripts/submit_cmd.sh remo-id train --manifest manifest.csv --model resne
 
 ## Data availability
 
-The Remoscope image data and the cohort table of the sepsis study will be released at
-**(dataset link TBD)**. The clinical metadata is not public. [`examples/sepsis_paper/README.md`](examples/sepsis_paper/README.md)
-lists which outputs need it.
+The Remoscope image data and the manifest of the sepsis study will be released at
+**(dataset link TBD)**. [`examples/sepsis_paper/README.md`](examples/sepsis_paper/README.md).
 
 ## Repository layout
 
@@ -391,13 +393,11 @@ image MIL, instance models and embedding-MIL. It needs no private packages.
 ## Ownership
 
 - **Owner:** Bioengineering group, Chan Zuckerberg Biohub San Francisco
-  (group leader: **TBD**).
 - **Maintainer:** Nicholas Bratvold ([@NicholasBratvold](https://github.com/NicholasBratvold)).
-- **Possible heirs:** TBD.
 
 ## License and citation
 
 Released under the [MIT License](LICENSE). Please read our [Code of Conduct](CODE_OF_CONDUCT.md)
 and report security issues as described in [SECURITY.md](SECURITY.md).
 
-If you use this code, please cite the publication above (citation TBD).
+Cite if you want: link TBD.

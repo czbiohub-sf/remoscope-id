@@ -5,12 +5,15 @@
 experiment by the fold model that did not train on it, this maps fold K to its held-out
 experiments (``repeat0_foldK/splits.yaml``, ``val``) and its checkpoint at ``--epoch``,
 then runs the stage with ``--checkpoint <fold ckpt> --experiment_ids <held-out ids>``.
-Every argument after the stage name is passed through. Use one SLURM array task per fold
+Every argument after the stage name is passed through, including the data source:
+``--manifest manifest.csv --classes ICU-ctrl,healthy,sepsis`` (no database) or
+``--class_config`` (default: the fold's classes.yaml). Use one SLURM array task per fold
 (``--fold`` defaults to ``$SLURM_ARRAY_TASK_ID``); all folds share one ``--work_dir``:
 
     sbatch --array=0-46 --gpus-per-node=1 --mem=48G scripts/submit_cmd.sh \\
         python examples/sepsis_paper/occlusion_fold.py --cv_dir $CV --epoch 50 \\
-        screen --work_dir $CV/occlusion --cell_config examples/sepsis_paper/configs/wbc_rbc_plt.yaml
+        screen --work_dir $CV/occlusion --manifest manifest.csv --classes ICU-ctrl,healthy,sepsis \\
+        --cell_config examples/sepsis_paper/configs/wbc_rbc_plt.yaml
 """
 import argparse
 import os

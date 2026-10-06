@@ -2,18 +2,17 @@
 
 Importing this module registers the paper's class colours with the package style
 (``remo_id.reports.style.set_class_colors``) so every figure -- main figures,
-tables and the Fig 2 chain -- draws Sepsis / ICU control / Healthy in the same
+tables and the cell occlusion figure -- draws Sepsis / ICU control / Healthy in the same
 colours as the published figures. Import it before building any figure.
 
 Also holds what make_paper_results.py and figures_paper.py both need (class
-resolution, prediction loading, patient aggregation, the clinical input table,
-table rendering, step logging, fixed-epoch checkpoint resolution), so neither
-imports the other.
+resolution, prediction loading, patient aggregation, the manifest and its clinical
+columns, table rendering, step logging, fixed-epoch checkpoint resolution), so
+neither imports the other.
 """
 import glob
 import os
 import traceback
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -107,8 +106,9 @@ def fold_checkpoint(fold_dir, epoch):
 class ClassInfo:
     """Resolved class order/names + semantic role indices."""
 
-    def __init__(self, class_names, sepsis_idx, neg_idx, healthy_idx,
-                 display_order, sepsis_study, healthy_study, class_definitions):
+    def __init__(self, labels, class_names, sepsis_idx, neg_idx, healthy_idx,
+                 display_order, sepsis_study, healthy_study):
+        self.labels = labels                    # manifest labels, index-aligned to model
         self.class_names = class_names          # display names, index-aligned to model
         self.sepsis_idx = sepsis_idx
         self.neg_idx = neg_idx                  # ICU control (sepsis-negative)
@@ -116,7 +116,6 @@ class ClassInfo:
         self.display_order = display_order      # list of indices for figure ordering
         self.sepsis_study = sepsis_study
         self.healthy_study = healthy_study
-        self.class_definitions = class_definitions
 
     @property
     def display_names(self):
@@ -142,34 +141,32 @@ def pretty_class_name(n):
     return n.capitalize() if n.islower() else n
 
 
-def resolve_class_info(cv_dir, class_config_path):
-    """Use the model's class ORDER (fold classes.yaml) + the config's NAMES.
-
-    The fold classes.yaml is authoritative for index order; the config supplies
-    the display names and is validated to share the same study/column/value order.
-    Display order is [sepsis, ICU control, healthy].
-    """
-    from remo_id.inference.context import load_class_config
-
+def model_class_names(cv_dir):
+    """Class names in the model's index order (the fold classes.yaml)."""
     fold_yaml = sorted(glob.glob(os.path.join(cv_dir, "repeat*_fold*", "classes.yaml")))
     if not fold_yaml:
         raise FileNotFoundError(f"No fold classes.yaml under {cv_dir}")
     with open(fold_yaml[0]) as f:
-        model_classes = yaml.safe_load(f)["classes"]
+        return [str(c["name"]) for c in yaml.safe_load(f)["classes"]]
 
-    class_definitions, cfg_names, *_ = load_class_config(class_config_path)
 
-    def _key(c):
-        return (str(c.get("study_id")), str(c.get("column")), str(c.get("value")))
+def resolve_classes(cv_dir, classes=None):
+    """The model's class names; ``classes`` ("A,B,C", --classes) must match them."""
+    names = model_class_names(cv_dir)
+    if classes:
+        given = [c.strip() for c in classes.split(",") if c.strip()]
+        if given != names:
+            raise SystemExit(f"--classes {given} do not match the model's class order "
+                             f"{names} (repeat*_fold*/classes.yaml)")
+    return names
 
-    if len(class_definitions) == len(model_classes):
-        for i, (a, b) in enumerate(zip(class_definitions, model_classes)):
-            if _key(a) != _key(b):
-                warnings.warn(
-                    f"class_config index {i} {_key(a)} != model classes.yaml {_key(b)}; "
-                    "display names may be misaligned with model outputs.")
 
-    class_names = [pretty_class_name(n) for n in cfg_names]
+def resolve_class_info(cv_dir, manifest, classes=None):
+    """Class order and names of the model (fold classes.yaml), roles by name, and
+    the study of each role's labelled manifest rows. Display order is
+    [sepsis, ICU control, healthy]."""
+    labels = resolve_classes(cv_dir, classes)
+    class_names = [pretty_class_name(n) for n in labels]
     sepsis_idx = _role_index(class_names, "sepsis")
     healthy_idx = _role_index(class_names, "healthy")
     neg_idx = _role_index(class_names, "icu", "ctrl", "control")
@@ -177,71 +174,94 @@ def resolve_class_info(cv_dir, class_config_path):
         others = [i for i in range(len(class_names)) if i not in (sepsis_idx, healthy_idx)]
         neg_idx = others[0] if others else None
 
-    sepsis_study = model_classes[sepsis_idx].get("study_id") if sepsis_idx is not None else "sepsis"
-    healthy_study = model_classes[healthy_idx].get("study_id") if healthy_idx is not None else None
+    def _study(idx):
+        return manifest.label_study(labels[idx]) if idx is not None else None
 
     pref = [i for i in (sepsis_idx, neg_idx, healthy_idx) if i is not None]
     display_order = pref + [i for i in range(len(class_names)) if i not in pref]
-    return ClassInfo(class_names, sepsis_idx, neg_idx, healthy_idx,
-                     display_order, sepsis_study, healthy_study, class_definitions)
+    return ClassInfo(labels, class_names, sepsis_idx, neg_idx, healthy_idx,
+                     display_order, _study(sepsis_idx), _study(healthy_idx))
 
 
 # ===========================================================================
-# experiment -> sample (patient) mapping
-# ===========================================================================
-def load_cohort_table(path):
-    """Cohort table (build_cohort_table.py / data release): one row per
-    experiment with experiment_id, sample_id, study_id, scope."""
-    df = pd.read_csv(path, dtype=str).fillna("")
-    missing = {"experiment_id", "sample_id"} - set(df.columns)
-    if missing:
-        raise ValueError(f"{path} lacks columns {sorted(missing)}")
-    return df
-
-
-# ===========================================================================
-# Clinical input table + its spec
+# The manifest: experiments, patients, scopes and clinical columns
 # ===========================================================================
 DEFAULT_CLINICAL_SPEC = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                      "configs", "clinical_tables.yaml")
 
 
-class Clinical:
-    """The clinical input table (``--clinical_table``) and its spec
+def spec_columns(spec):
+    """Every clinical column the spec names."""
+    cols = []
+
+    def add(*names):
+        cols.extend(n for n in names if n and n not in cols)
+
+    for terms in spec.get("derived_scores", {}).values():
+        add(*(c for term in terms for c, _, _ in term))
+    add(*spec["diagnosis"].values())
+    d = spec["demographics"]
+    add(d["mortality"]["column"], d["microbiology"]["column"], d["pathogen_column"],
+        d["age_column"], *d["sex_columns"])
+    cc = spec["cohort_characteristics"]
+    add(*(r["column"] for r in cc["rows"]),
+        *(r["column"] for r in cc["manuscript"].get("insert_rows", [])))
+    add(*spec["variable_labels"])
+    for entries in spec["correlation_groups"].values():
+        for e in entries:
+            add(*(e if isinstance(e, list) else [e]))
+    add(*spec["discrimination"]["variables"])
+    return cols
+
+
+class Manifest:
+    """The manifest (``--manifest``) and the clinical spec
     (``configs/clinical_tables.yaml``).
 
-    The table has one row per experiment: ``experiment_id``, ``sample_id``,
-    ``study_id`` (as named in the class config), ``path``/``num_images`` and the
-    clinical variables the spec names. Rows of several studies share the file; a
-    column that is empty for every row of a study is "not recorded" by that study
-    (``study`` drops it). Only empty fields are missing values, so text such as
-    "None" stays text. The spec's ``single_precision_columns`` are parsed as float32.
+    One row per experiment: ``experiment_id``, ``sample_id``, ``study_id``,
+    ``scope``, ``path``, ``num_images``, ``label`` (class name, empty for
+    experiments outside the classes) and, optionally, the clinical columns the spec
+    names. Only empty fields are missing values.
     """
 
-    def __init__(self, table_path, spec_path=DEFAULT_CLINICAL_SPEC):
-        self.table = pd.read_csv(table_path, keep_default_na=False, na_values=[""],
-                                 dtype={"experiment_id": str, "sample_id": str,
-                                        "study_id": str})
-        missing = {"experiment_id", "sample_id", "study_id"} - set(self.table.columns)
-        if missing:
-            raise ValueError(f"{table_path} lacks columns {sorted(missing)}")
+    def __init__(self, path, spec_path=DEFAULT_CLINICAL_SPEC):
+        from remo_id.data.manifest import load_manifest
+        self.table = load_manifest(path)
         with open(spec_path) as f:
             self.spec = yaml.safe_load(f)
-        for c in self.spec.get("single_precision_columns", []):
-            if c in self.table.columns:
-                self.table[c] = self.table[c].astype(np.float32)
 
-    def study(self, study_id):
-        """Rows of one study in file order, without the columns it does not record."""
-        d = self.table[self.table["study_id"] == str(study_id)]
-        if d.empty:
-            raise KeyError(f"no rows of study '{study_id}' in the clinical table")
-        return d.dropna(axis=1, how="all").reset_index(drop=True)
+    def _map(self, col):
+        t = self.table.dropna(subset=[col])
+        return dict(zip(t["experiment_id"], t[col].astype(str)))
 
     def sample_map(self):
         """experiment_id -> sample_id over every row with a sample_id."""
-        t = self.table.dropna(subset=["sample_id"])
-        return dict(zip(t["experiment_id"], t["sample_id"]))
+        return self._map("sample_id")
+
+    def scope_map(self):
+        """experiment_id -> scope."""
+        if "scope" not in self.table.columns:
+            raise KeyError("the manifest has no scope column")
+        return self._map("scope")
+
+    def label_study(self, label):
+        """The study of the rows labelled ``label``."""
+        studies = self.table.loc[self.table["label"] == label, "study_id"].dropna().unique()
+        if len(studies) > 1:
+            raise ValueError(f"rows labelled '{label}' span studies {list(studies)}")
+        return str(studies[0]) if len(studies) else None
+
+    def study(self, study_id):
+        """Rows of one study in file order."""
+        d = self.table[self.table["study_id"] == str(study_id)]
+        if d.empty:
+            raise KeyError(f"no rows of study '{study_id}' in the manifest")
+        return d.reset_index(drop=True)
+
+    def clinical_columns(self):
+        """The spec's clinical columns that hold data in the manifest."""
+        return [c for c in spec_columns(self.spec)
+                if c in self.table.columns and self.table[c].notna().any()]
 
 
 # ===========================================================================

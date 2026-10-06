@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Per-image UMAP for the Fig 1 bottom row: one point per whole frame (not per cell).
+"""Per-image UMAP for the bottom row of roc_confusion_umap: one point per whole frame
+(not per cell).
 
 Projects every frame of every experiment of one scope (default the lfm-ohmu scope,
 the only scope with all three classes), taken from ONE fold model's per-image
@@ -12,7 +13,7 @@ UMAP runs multithreaded without a fixed random_state, so a rerun gives an
 equivalent but not bit-identical layout.
 
     python examples/sepsis_paper/umap_images.py --embeddings_dir <cv_dir>/per_image_fold0_all \\
-        --cohort cohort.csv --output_dir <cv_dir>/full_umap_ohmu
+        --manifest manifest.csv --output_dir <cv_dir>/full_umap_ohmu
 """
 import argparse
 import glob
@@ -21,7 +22,7 @@ import time
 
 import numpy as np
 
-from common import load_cohort_table
+from common import Manifest
 
 
 def log(m):
@@ -58,7 +59,7 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--embeddings_dir", required=True,
                    help="loo-per-image --fold_idx 0 --all_experiments output")
-    p.add_argument("--cohort", required=True, help="cohort table CSV (scope column)")
+    p.add_argument("--manifest", required=True, help="manifest CSV (scope column)")
     p.add_argument("--output_dir", required=True)
     p.add_argument("--scope", default="ohmu")
     p.add_argument("--pca", type=int, default=100)
@@ -68,8 +69,7 @@ def main():
     args = p.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
-    cohort = load_cohort_table(args.cohort)
-    scope_of = dict(zip(cohort["experiment_id"], cohort["scope"]))
+    scope_of = Manifest(args.manifest).scope_map()
     X, cls, exp, imgid, class_names = load_embeddings(args.embeddings_dir, scope_of,
                                                       args.scope)
 

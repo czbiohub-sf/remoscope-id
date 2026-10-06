@@ -90,8 +90,11 @@ def _resolve_class_config_path(kwargs, out_dir) -> str:
         raw = _manifest_class_config(kwargs)
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, "manifest_classes.yaml")
-        with open(path, "w") as f:
+        # Atomic: parallel array tasks sharing out_dir write the same file.
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
             yaml.safe_dump(raw, f, sort_keys=False)
+        os.replace(tmp, path)
         print(f"Class config for --manifest: {path}")
         return path
     if not kwargs.get("class_config"):
