@@ -1,0 +1,20 @@
+
+classes:
+  - name: "ICU-ctrl"
+    study_id: sepsis
+    column: sepsis_positive
+    value: "false"
+
+  - name: "healthy"
+    study_id: "ucsf_healthy_donors_april2026"
+    column: flowcell_type
+    value: "Thin"
+
+  - name: "sepsis"
+    study_id: sepsis
+    column: sepsis_positive
+    value: "true"
+
+exclude:
+  - column: scope
+    value: "lfm-insight"

@@ -1,0 +1,29 @@
+
+classes:
+  - name: "ICU-ctrl"
+    study_id: sepsis
+    column: sepsis_positive
+    value: "false"
+
+  - name: "healthy"
+    study_id: "ucsf_healthy_donors_april2026"
+    column: flowcell_type
+    value: "Thin"
+
+  - name: "sepsis"
+    study_id: sepsis
+    column: sepsis_positive
+    value: "true"
+
+# lfm-ohmu only: drop the other scopes (all healthy) so the per-image UMAP of
+# roc_confusion_umap covers lfm-ohmu only (the only scope with all three classes).
+# Training and every other analysis use every scope (sepsis_icu_healthy.yaml).
+exclude:
+  - column: scope
+    value: "lfm-insight"
+  - column: scope
+    value: "lfm-phoenix"
+  - column: scope
+    value: "lfm-noname1"
+  - column: scope
+    value: "lfm-noname2"

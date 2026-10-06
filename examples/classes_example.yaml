@@ -1,0 +1,41 @@
+# Example class config. task_type and num_classes are inferred:
+#   1 class    -> binary (matched = positive, other labelled experiments = negative)
+#   2 classes  -> binary (class index = definition order; the second is positive)
+#   3+ classes -> multiclass (class index = definition order)
+#
+# Usage:
+#   remo-id train --class_config examples/classes_example.yaml --model resnet18-mil
+#
+# Training with `--manifest manifest.csv` builds an equivalent config
+# automatically (one entry per label) and saves it as classes.yaml next to the
+# checkpoint; write one by hand to merge labels, reorder classes, or pull from
+# several manifests.
+
+classes:
+  # Experiments of the manifest whose `column` equals `value`
+  - name: "control"
+    manifest: /data/manifest.csv
+    column: label
+    value: "negative"
+
+  # Entries with the SAME NAME are merged into one class, e.g. two labels or
+  # two manifests feeding one class.
+  - name: "disease"
+    manifest: /data/manifest.csv
+    column: label
+    value: "positive"
+  - name: "disease"
+    manifest: /data/second_site_manifest.csv
+    column: label
+    value: "positive"
+
+# Optional: labelled experiments matching no class go to this class name.
+# default_class: "control"
+
+# Optional: drop experiments from every class.
+exclude:
+  - experiment_ids: [6]
+
+# Entries may instead select experiments from the Remoscope database
+# (`study_id`, `column`, `value` / `threshold` + `threshold_mode`, or
+# `experiment_ids`); that requires the private remoscope-database package.

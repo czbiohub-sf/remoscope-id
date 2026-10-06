@@ -1,0 +1,19 @@
+# Example cell_config for embedding-MIL: WBC / PLT / RBC by regionprops gates.
+# `where` is a pandas query over each experiment's *regionprops.parquet columns
+# (here `area` in pixels and `intensity_mean` on the 0-255 scale); embedding j
+# describes the cell at row regionprops_row[j] of that table.
+# First-match priority (platelet before wbc so small+bright cells aren't called WBC);
+# rbc is the catch-all. `weight` enriches a class when composing a bag; bag composition
+# uses weight * TRUE per-experiment class count (not the capped pool), so cross-sample
+# composition survives while WBCs are upweighted out of the RBC sea.
+pool_cap: 200000          # strict max distinct cells kept per class per experiment
+cells:
+  - name: platelet
+    where: "(area < 500) & (intensity_mean > 140)"
+    weight: 5
+  - name: wbc
+    where: "(area > 2300) | (intensity_mean > 140)"
+    weight: 20
+  - name: rbc
+    where: "*"
+    weight: 1

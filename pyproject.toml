@@ -1,0 +1,61 @@
+[project]
+name = "remo-id"
+version = "1.0.0"
+description = "Multiple-instance learning framework for classifying Remoscope blood-microscopy experiments"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+authors = [
+  { name = "Nicholas Bratvold" }
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+
+dependencies = [
+  "click>=8.0",
+  "numpy",
+  "pandas>=2.2,<3",
+  "pyarrow",
+  "torch",
+  "torchvision",
+  "lightning",
+  "zarr>=3.0.0",
+  "pillow",
+  "pyyaml>=6.0",
+  "scikit-learn",
+  "scipy",
+  "matplotlib",
+  "umap-learn",
+  "grad-cam",
+  "opencv-python-headless",
+  "reportlab",
+  "wandb",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+examples = ["datashader"]   # examples/sepsis_paper figures
+
+[project.urls]
+Homepage = "https://github.com/czbiohub-sf/remoscope-id"
+Repository = "https://github.com/czbiohub-sf/remoscope-id"
+
+[project.scripts]
+remo-id = "remo_id.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["remo_id"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

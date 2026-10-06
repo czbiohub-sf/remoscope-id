@@ -1,0 +1,3 @@
+# Distributed with the data release (pseudonymous experiment/patient IDs), never in the repo
+manifest.csv
+__pycache__/

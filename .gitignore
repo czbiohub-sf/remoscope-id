@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Training / experiment outputs
+checkpoints/
+wandb/
+slurm-outputs/
+lightning_logs/
+*.ckpt
+*.log
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,196 @@
+# Clinical spec: which clinical columns of the manifest the clinical outputs read and how.
+#
+# The manifest (--manifest) has one row per experiment: experiment_id, sample_id,
+# study_id, scope, path / num_images (image and cell counts of the demographics
+# table), label (the class name) and, optionally, the columns named below. Rows of
+# different studies share one file. Empty fields are missing values; nothing else is.
+# The clinical outputs are built when these columns hold data. Patient groups come from
+# the label column (the sepsis and ICU-control classes).
+#
+# Row modes (cohort_characteristics.rows): num = median (IQR); bin = n/N (%) of 0/1
+# (or true/false) values; level:<v> = n/N (%) of rows equal to <v>; cat = header + one
+# row per level; pathogen = identified count + one row per organism (names expanded
+# via `organisms`); diagnosis = header + one row per clinical diagnosis.
+# label: null = automatic label from the column name (`auto_labels`).
+
+derived_scores:             # sum of 0/1 terms (a term is true if any of its conditions
+  qsofa:                    # holds); empty when any input is missing
+    - [[resp_rate_max_bpm, ">=", 22]]
+    - [[bp_sys_min_mmhg, "<=", 100]]
+    - [[glasgow_coma_scale, "<", 15]]
+  sirs:
+    - [[temp_min_c, "<", 36], [temp_max_c, ">", 38]]
+    - [[heart_rate_max_bpm, ">", 90]]
+    - [[resp_rate_max_bpm, ">", 20]]
+    - [[wbc_min_e3_ul, "<", 4], [wbc_max_e3_ul, ">", 12]]
+
+# Free-text values that mean "nothing identified" (pathogen / diagnosis columns).
+negative_tokens: ["no", "none", "negative", "not identified"]
+
+diagnosis:                  # misclassification, ICU-control diagnosis and indeterminate tables
+  notes_column: patient_notes
+  pathogen_column: pathogen
+
+pathogen_classes:           # substring -> class, viral checked first (demographics)
+  viral: [influenza, hsv, cmv, rhino, rsv, covid, sars, adeno, viral]
+  # candida is fungal but counted with the culture-positive bacterial cases
+  bacterial: [coli, kleb, pneumo, staph, mrsa, strep, pyogenes, entero, serratia,
+              morganii, faecalis, pseudomonas, proteus, mirabilis, bacter, aureus,
+              agalactiae, enterococc, citrobacter, candida]
+
+# --- demographics: demographics and support per class
+demographics:
+  mortality: {column: death_60d, label: "Mortality (60d)"}
+  microbiology: {column: microbio_positive, label: "Microbiology +"}
+  pathogen_column: pathogen
+  age_column: age
+  sex_columns: [sex, gender, sex_at_birth]   # first non-empty one per row
+  p_label: "p (ICU vs Sepsis)"
+
+# --- cohort_characteristics: per group (median (IQR) / n/N (%))
+cohort_characteristics:
+  title: "Cohort and healthy-control demographics and laboratory results"
+  groups: {positive: "Sepsis", negative: "ICU-control", healthy: "Healthy Donors"}
+  p_label: "p (ICU vs Sepsis)"
+  rows:
+    - {column: age, label: Age, mode: num}
+    - {column: age_over_89, label: "Age > 89", mode: bin}
+    - {column: sex, label: "Sex, Female", mode: "level:F"}
+    - {column: race, label: Race, mode: cat}
+    - {column: hispanic_ethnicity, label: Hispanic Ethnicity, mode: "level:Yes, Hispanic origin"}
+    - {column: temp_max_c, label: null, mode: num}
+    - {column: heart_rate_max_bpm, label: null, mode: num}
+    - {column: resp_rate_max_bpm, label: null, mode: num}
+    - {column: bp_sys_min_mmhg, label: null, mode: num}
+    - {column: wbc_max_e3_ul, label: null, mode: num}
+    - {column: hgb_min_g_dl, label: null, mode: num}
+    - {column: hct_min_pct, label: null, mode: num}
+    - {column: plt_min_e3_ul, label: null, mode: num}
+    - {column: neutrophils_max_e3_ul, label: null, mode: num}
+    - {column: monocytes_max_e3_ul, label: null, mode: num}
+    - {column: eosinophils_max_e3_ul, label: null, mode: num}
+    - {column: basophils_max_e3_ul, label: null, mode: num}
+    - {column: creatinine_max_mg_dl, label: null, mode: num}
+    - {column: glasgow_coma_scale, label: Glasgow Coma Scale, mode: num}
+    - {column: apache_iii, label: APACHE III, mode: num}
+    - {column: on_pressors_inotropes, label: On Pressors/Inotropes, mode: bin}
+    - {column: intubated, label: Intubated, mode: bin}
+    - {column: intubation_days, label: Intubation Days, mode: num}
+    - {column: ventilator_free_days, label: Ventilator-Free Days, mode: num}
+    - {column: microbio_positive, label: "Microbiology +", mode: bin}
+    - {column: pathogen, label: Pathogen Identified, mode: pathogen}
+    - {column: patient_notes, label: Clinical Diagnosis, mode: diagnosis}
+    - {column: hospitalized_within_30d, label: Hospitalized within 30d, mode: bin}
+    - {column: exit_reason, label: Exit Reason, mode: cat}
+    - {column: death_28d, label: 28-Day Mortality, mode: bin}
+    - {column: death_60d, label: 60-Day Mortality, mode: bin}
+    - {column: death_hospital, label: In-Hospital Mortality, mode: bin}
+  # Manuscript version (cohort_characteristics_manuscript): extra rows, then the rows and
+  # blocks (a header and its indented sub-rows) the manuscript omits.
+  manuscript:
+    insert_rows:
+      - {after: neutrophils_max_e3_ul, column: lymphocytes_max_e3_ul, label: null, mode: num}
+    drop_rows: ["Age > 89", "Microbiology +", "Hospitalized within 30d",
+                "In-Hospital Mortality"]
+    drop_blocks: [Clinical Diagnosis, Exit Reason]
+
+# Abbreviated organism names -> full names (pathogen breakdown).
+organisms:
+  E coli: Escherichia coli
+  K pneumo: Klebsiella pneumoniae
+  M morganii: Morganella morganii
+  E faecalis: Enterococcus faecalis
+  C amalonaticus: Citrobacter amalonaticus
+  P mirabilis: Proteus mirabilis
+  S pyogenes: Streptococcus pyogenes
+  Strep agalactiae: Streptococcus agalactiae
+  MRSA: Methicillin-resistant Staphylococcus aureus
+  HSV: Herpes simplex virus
+  M pneumoniae: Mycoplasma pneumoniae
+  influenza A: Influenza A
+  Serratia: Serratia species
+  Enterobacter: Enterobacter species
+  Candida: Candida species
+
+# Automatic row labels from column names (cohort_characteristics rows with label: null).
+auto_labels:
+  unit_suffixes: [[_e3_ul, "10³/µL"], [_mg_dl, mg/dL], [_g_dl, g/dL], [_mmhg, mmHg],
+                  [_bpm, bpm], [_pct, "%"], [_c, "°C"]]
+  acronyms: {bp: BP, sys: Systolic, wbc: WBC, hgb: Hgb, hct: Hct, plt: Plt, gcs: GCS,
+             apache: APACHE, iii: III, rr: RR, hr: HR, icu: ICU, sirs: SIRS,
+             qsofa: qSOFA, 30d: 30d, 28d: 28d, 60d: 60d, ards: ARDS}
+
+# --- clinical_correlations: Spearman correlations of the model probabilities with
+# clinical variables
+variable_labels:
+  sepsis_positive: Sepsis +/-
+  microbio_positive: Microbiology +
+  temp_min_c: Temp min
+  temp_max_c: Temp max
+  heart_rate_min_bpm: Heart rate min
+  heart_rate_max_bpm: Heart rate max
+  resp_rate_min_bpm: Resp rate min
+  resp_rate_max_bpm: Resp rate max
+  bp_sys_min_mmhg: BP sys min
+  bp_sys_max_mmhg: BP sys max
+  on_pressors_inotropes: Pressors/inotropes
+  wbc_min_e3_ul: WBC min
+  wbc_max_e3_ul: WBC max
+  hgb_min_g_dl: Hgb min
+  hgb_max_g_dl: Hgb max
+  hct_min_pct: Hct min
+  hct_max_pct: Hct max
+  plt_min_e3_ul: Platelets min
+  neutrophils_min_e3_ul: Neutrophils min
+  neutrophils_max_e3_ul: Neutrophils max
+  monocytes_min_e3_ul: Monocytes min
+  monocytes_max_e3_ul: Monocytes max
+  eosinophils_min_e3_ul: Eosinophils min
+  eosinophils_max_e3_ul: Eosinophils max
+  basophils_min_e3_ul: Basophils min
+  basophils_max_e3_ul: Basophils max
+  creatinine_min_mg_dl: Creatinine min
+  creatinine_max_mg_dl: Creatinine max
+  glasgow_coma_scale: GCS
+  apache_iii: APACHE III
+  qsofa: qSOFA
+  sirs: SIRS
+  hospitalized_within_30d: Hospitalized <30d
+  intubated: Intubated
+  intubation_days: Intubation days
+  ventilator_free_days: Ventilator-free days
+  death_60d: Mortality (60d)
+  age: Age
+
+# clinical_correlations row groups, in order; a [min, max] pair shows whichever of the two
+# correlates more strongly with a model probability.
+correlation_groups:
+  Demographics: [sepsis_positive, microbio_positive, age]
+  Severity scores: [apache_iii, qsofa, sirs, glasgow_coma_scale]
+  Chemistry: [[creatinine_min_mg_dl, creatinine_max_mg_dl]]
+  Vitals: [[temp_min_c, temp_max_c], [heart_rate_min_bpm, heart_rate_max_bpm],
+           [resp_rate_min_bpm, resp_rate_max_bpm], [bp_sys_min_mmhg, bp_sys_max_mmhg],
+           on_pressors_inotropes, intubated, intubation_days, ventilator_free_days]
+  Hematology: [[wbc_min_e3_ul, wbc_max_e3_ul], [hgb_min_g_dl, hgb_max_g_dl],
+               [hct_min_pct, hct_max_pct], plt_min_e3_ul,
+               [neutrophils_min_e3_ul, neutrophils_max_e3_ul],
+               [monocytes_min_e3_ul, monocytes_max_e3_ul],
+               [eosinophils_min_e3_ul, eosinophils_max_e3_ul],
+               [basophils_min_e3_ul, basophils_max_e3_ul]]
+  Outcome: [death_60d, hospitalized_within_30d]
+
+# --- sepsis_vs_icu_control_auc_ranking / two_variable_search: sepsis vs ICU-control
+# discrimination, model vs clinical variables
+discrimination:
+  variables: [microbio_positive, age, apache_iii, qsofa, sirs, glasgow_coma_scale,
+              creatinine_max_mg_dl, creatinine_min_mg_dl, temp_min_c, heart_rate_max_bpm,
+              resp_rate_max_bpm, bp_sys_max_mmhg, on_pressors_inotropes, intubated,
+              intubation_days, ventilator_free_days, wbc_min_e3_ul, wbc_max_e3_ul,
+              hgb_min_g_dl, hct_min_pct, plt_min_e3_ul, neutrophils_min_e3_ul,
+              monocytes_max_e3_ul, eosinophils_min_e3_ul, basophils_min_e3_ul,
+              death_60d, hospitalized_within_30d]
+  # Culture positivity is part of the clinical definition of (bacterial) sepsis, so
+  # "predicting" sepsis with it is circular: kept as a single-variable leakage check,
+  # never fused with the model (sepsis_vs_icu_control_auc_ranking) and flagged "(leak)"
+  # in two_variable_search.
+  fusion_exclude: [microbio_positive]
