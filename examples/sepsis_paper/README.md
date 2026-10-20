@@ -2,7 +2,7 @@
 
 This folder shows how remo-id was configured and run for the sepsis study that accompanies
 
-> **Rapid Sepsis Diagnosis in Critically Ill Adults with Remoscope Label-Free Whole-Blood Imaging** Nicholas Bratvold, Ilakkiyan Jeyakumar, Michelle Khoo, Gregory Suematsu, Olivia Chao, Tal Shwartzman, Andrew Willmore, Julia Hutchinson, Carolyn S. Calfee, Michael A. Matthay, Natasha Spottiswoode, Charles R. Langelier* and Paul M. Lebel*. medRxiv (link TBD), DOI TBD.
+> **Rapid Sepsis Diagnosis in Critically Ill Adults with Remoscope Label-Free Whole-Blood Imaging** Nicholas Bratvold, Ilakkiyan Jeyakumar, Michelle Khoo, Gregory Suematsu, Olivia Chao, Tal Shwartzman, Andrew Willmore, Julia Hutchinson, Carolyn S. Calfee, Michael A. Matthay, Natasha Spottiswoode, Charles R. Langelier* and Paul M. Lebel*. *medRxiv* (2026). https://doi.org/10.64898/2026.10.08.26364716
 
 It holds the class and cell configs, the training and leave-one-out (LOO) evaluation
 commands, the cell occlusion screen and the figure and table builders that generated the
@@ -11,7 +11,7 @@ figures in the publication. Use it as a template for your own data.
 The study's model is a resnet50 attention multiple-instance-learning (MIL) classifier. It
 treats each Remoscope acquisition (experiment) as a bag of full-resolution brightfield frames
 and classifies it as Sepsis, ICU control or Healthy. It was evaluated by patient-grouped LOO
-cross-validation: 47 folds, one patient per fold, 129 experiments. The analysis use the held-out
+cross-validation: 47 folds, one patient per fold, 129 experiments. The analyses use the held-out
 predictions made by one fixed-epoch checkpoint of each fold.
 
 ## Data availability
@@ -104,12 +104,12 @@ python examples/sepsis_paper/umap_images.py --embeddings_dir $CV/per_image_fold0
   --output_dir $CV/full_umap_ohmu                                       # 32 CPUs, --mem=192G
 ```
 
-UMAP runs multithreaded without a fixed `random_state`, so a rerun is not guarunteed to produce the same result. It will be very similiar.
+UMAP runs multithreaded without a fixed `random_state`, so a rerun is not guaranteed to produce the same result. It will be very similar.
 
 ### 4. Cell occlusion screen
 
 `remo-id analysis occlusion` scores experiments with one checkpoint
-([root README](../../README.md#occlusion-analysis)). To explain every experiment by the fold
+([root README](../../README.md#usage)). To explain every experiment by the fold
 model that held it out, `occlusion_fold.py` runs each stage once per fold: array task K
 reads `repeat0_foldK/splits.yaml` (the `val` experiments) and the fold's epoch-50 checkpoint
 and calls the stage with `--checkpoint <fold ckpt> --experiment_ids <held-out ids>`. All folds

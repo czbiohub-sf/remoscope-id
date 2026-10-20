@@ -9,7 +9,7 @@ per-cell embeddings.
 
 This repository was used in the publication below. See [`examples/sepsis_paper/`](examples/sepsis_paper/)
 
-> **Rapid Sepsis Diagnosis in Critically Ill Adults with Remoscope Label-Free Whole-Blood Imaging** Nicholas Bratvold, Ilakkiyan Jeyakumar, Michelle Khoo, Gregory Suematsu, Olivia Chao, Tal Shwartzman, Andrew Willmore, Julia Hutchinson, Carolyn S. Calfee, Michael A. Matthay, Natasha Spottiswoode, Charles R. Langelier* and Paul M. Lebel* *medRxiv* (link TBD). DOI TBD.
+> **Rapid Sepsis Diagnosis in Critically Ill Adults with Remoscope Label-Free Whole-Blood Imaging** Nicholas Bratvold, Ilakkiyan Jeyakumar, Michelle Khoo, Gregory Suematsu, Olivia Chao, Tal Shwartzman, Andrew Willmore, Julia Hutchinson, Carolyn S. Calfee, Michael A. Matthay, Natasha Spottiswoode, Charles R. Langelier* and Paul M. Lebel*. *medRxiv* (2026). https://doi.org/10.64898/2026.10.08.26364716
 
 Developed at the [Chan Zuckerberg Biohub San Francisco](https://www.czbiohub.org/sf/) by the
 Bioengineering group.
@@ -88,7 +88,7 @@ It is strongly recommended to set up your own database to store your data. The m
 
 ## Models
 
-Here are some options, add more as needed.
+The following architectures are available through `--model`:
 
 | `--model` | type |
 |---|---|
@@ -101,6 +101,11 @@ MIL pooling (`--pooling`): `attention` (default), `mean`, `max`, `linear` (mi-Ne
 
 DINOv3 weights are not redistributed: download them from Meta and pass `--dino_weights`
 (or set `REMO_ID_DINO_WEIGHTS`).
+
+**Adding a model.** Subclass `BaseInstanceModel` or `BaseMILModel` (`remo_id/models/`) and
+register the name in `MODEL_REGISTRY` in `remo_id/models/__init__.py`. Then it is available as
+a `--model` choice. Names ending in `-mil` are treated as MIL models. To reuse an existing
+backbone's augmentations, also add the name to `_AUGMENTATION_BACKBONE_MAP`.
 
 ## Usage
 
@@ -150,4 +155,14 @@ Bratvold ([@NicholasBratvold](https://github.com/NicholasBratvold)).
 
 [MIT License](LICENSE) · [Code of Conduct](CODE_OF_CONDUCT.md) · [Security](SECURITY.md)
 
-Cite if you want: link TBD.
+## Citation
+
+```bibtex
+@article{bratvold2026remoscope,
+  title   = {Rapid Sepsis Diagnosis in Critically Ill Adults with Remoscope Label-Free Whole-Blood Imaging},
+  author  = {Bratvold, Nicholas and Jeyakumar, Ilakkiyan and Khoo, Michelle and Suematsu, Gregory and Chao, Olivia and Shwartzman, Tal and Willmore, Andrew and Hutchinson, Julia and Calfee, Carolyn S. and Matthay, Michael A. and Spottiswoode, Natasha and Langelier, Charles R. and Lebel, Paul M.},
+  journal = {medRxiv},
+  year    = {2026},
+  doi     = {10.64898/2026.10.08.26364716}
+}
+```
