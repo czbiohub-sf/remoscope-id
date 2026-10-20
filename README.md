@@ -99,8 +99,23 @@ The following architectures are available through `--model`:
 MIL pooling (`--pooling`): `attention` (default), `mean`, `max`, `linear` (mi-Net), `topk`,
 `transformer`, `additive`.
 
-DINOv3 weights are not redistributed: download them from Meta and pass `--dino_weights`
-(or set `REMO_ID_DINO_WEIGHTS`).
+**Pretrained weights.** No weights are bundled with this repository. They are downloaded at
+runtime or supplied by the user, and each set keeps its own license, separate from this
+repository's:
+
+| `--model` (and `-mil` variant) | weights | source | license |
+|---|---|---|---|
+| `resnet18` | `IMAGENET1K_V1` | torchvision | BSD-3-Clause (torchvision); trained on ImageNet-1K, see the [ImageNet terms](https://image-net.org/download) |
+| `resnet50` | `IMAGENET1K_V2` | torchvision | as above |
+| `vit-b-16` | `IMAGENET1K_V1` | torchvision | as above |
+| `vit-l-16` | `IMAGENET1K_SWAG_E2E_V1` | torchvision, from [Meta SWAG](https://github.com/facebookresearch/SWAG) | [CC BY-NC 4.0](https://github.com/facebookresearch/SWAG/blob/main/LICENSE) |
+| `dino-vits16`, `dino-vitsplus`, `dino-vitb` | DINOv3 ViT-S/16, ViT-S/16+, ViT-B/16 | [Meta DINOv3](https://github.com/facebookresearch/dinov3) | [DINOv3 License](https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md) |
+| `microscopy-cnn` | none (trained from scratch) | this repository | this repository's license |
+| `embedding-mil` | none (user-supplied embeddings) | user | that of the model that produced the embeddings |
+
+DINOv3 weights must be requested from Meta: accept the license, download the checkpoint and
+pass `--dino_weights` (or set `REMO_ID_DINO_WEIGHTS`). `--no-pretrained` trains any backbone
+from scratch.
 
 **Adding a model.** Subclass `BaseInstanceModel` or `BaseMILModel` (`remo_id/models/`) and
 register the name in `MODEL_REGISTRY` in `remo_id/models/__init__.py`. Then it is available as
