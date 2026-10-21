@@ -27,7 +27,7 @@ dependencies = [
   "torchvision",
   "lightning",
   "zarr>=3.0.0",
-  "pillow",
+  "pillow>=13.0",
   "pyyaml>=6.0",
   "scikit-learn",
   "scipy",
@@ -59,3 +59,7 @@ packages = ["remo_id"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv]
+# certifi is transitive (requests via wandb/datashader); floor it for the CA bundle update
+constraint-dependencies = ["certifi>=2026.10.19"]
