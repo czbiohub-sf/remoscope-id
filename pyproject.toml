@@ -61,5 +61,12 @@ packages = ["remo_id"]
 testpaths = ["tests"]
 
 [tool.uv]
-# certifi is transitive (requests via wandb/datashader); floor it for the CA bundle update
-constraint-dependencies = ["certifi>=2026.10.19"]
+# Floors for transitive deps with security fixes:
+#   certifi (requests via wandb/datashader) for the CA bundle update
+#   filelock, setuptools (via torch); opentelemetry-api (via wandb)
+constraint-dependencies = [
+  "certifi>=2026.10.19",
+  "filelock>=4.2.1",
+  "opentelemetry-api>=1.45.1",
+  "setuptools>=84.1.0",
+]
