@@ -160,8 +160,7 @@ CPU only, synthetic data, no private packages.
 
 ## Data availability
 
-The Remoscope image data and the manifest of the sepsis study will be released at
-**(dataset link TBD)**.
+The Remoscope image data and the manifest of the sepsis study is available here: [Dataset](https://www.ebi.ac.uk/biostudies/studies/S-BIAD4278).
 
 ## Ownership and license
 
